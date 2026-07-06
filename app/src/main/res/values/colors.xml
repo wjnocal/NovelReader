@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="reader_bg_light">#FAF7F0</color>
+    <color name="reader_bg_dark">#151515</color>
+    <color name="reader_bg_eye">#DCE8D2</color>
+    <color name="reader_bg_paper">#F4E4C6</color>
+    <color name="reader_bg_gray">#ECECEC</color>
+    <color name="reader_bg_green">#12342F</color>
+    <color name="reader_text_light">#24211D</color>
+    <color name="reader_text_dark">#E8E1D7</color>
+    <color name="reader_text_eye">#243321</color>
+    <color name="reader_text_paper">#302415</color>
+    <color name="reader_text_gray">#202020</color>
+    <color name="reader_text_green">#DDE8D5</color>
+</resources>

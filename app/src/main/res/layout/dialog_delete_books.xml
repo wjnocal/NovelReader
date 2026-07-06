@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/delete_dialog_background"
+    android:orientation="vertical"
+    android:paddingTop="18dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:id="@+id/deleteDialogTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="22dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="22dp"
+        android:text="删除书籍"
+        android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+        android:textColor="#111111"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/deleteDialogMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="22dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="22dp"
+        android:textColor="#222222"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="12dp"
+        android:gravity="end|center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:id="@+id/deleteDialogCancel"
+            android:layout_width="88dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:text="取消"
+            android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+            android:textColor="#111111" />
+
+        <TextView
+            android:id="@+id/deleteDialogConfirm"
+            android:layout_width="88dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:text="删除"
+            android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+            android:textColor="#111111"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

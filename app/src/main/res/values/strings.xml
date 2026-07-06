@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">小说阅读器</string>
+    <string name="import_book">导入</string>
+    <string name="empty_bookshelf">还没有书，点右下角导入 TXT 或 EPUB</string>
+</resources>
