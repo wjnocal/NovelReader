@@ -20,4 +20,7 @@ public interface ImportRecordDao {
 
     @Update
     void update(ImportRecordEntity record);
+
+    @Query("DELETE FROM import_records")
+    void deleteAll();
 }

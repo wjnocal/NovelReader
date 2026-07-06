@@ -14,6 +14,7 @@
         android:src="@drawable/bookshelf_bg" />
 
     <LinearLayout
+        android:id="@+id/mainContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
@@ -21,177 +22,442 @@
         android:paddingEnd="20dp">
 
         <LinearLayout
-            android:id="@+id/bookshelfTopBar"
+            android:id="@+id/bookshelfPage"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingTop="24dp"
-            android:paddingBottom="16dp">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/bookshelfTopBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="24dp"
+                android:paddingBottom="16dp">
+
+                <TextView
+                    android:id="@+id/groupBackButton"
+                    android:layout_width="76dp"
+                    android:layout_height="44dp"
+                    android:gravity="center_vertical"
+                    android:text="‹ 返回"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/readingTimeText"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:text="累计阅读0分钟"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/readingStreakBadge"
+                    android:layout_width="72dp"
+                    android:layout_height="30dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="#DDB95A52"
+                    android:gravity="center"
+                    android:text="连续0天"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/groupTitleText"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="center_vertical"
+                    android:maxLines="1"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/historyButton"
+                    android:layout_width="48dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="◷"
+                    android:textColor="#111111"
+                    android:textSize="34sp" />
+
+                <TextView
+                    android:id="@+id/searchButton"
+                    android:layout_width="48dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="⌕"
+                    android:textColor="#111111"
+                    android:textSize="34sp" />
+
+                <TextView
+                    android:id="@+id/moreButton"
+                    android:layout_width="48dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="···"
+                    android:textColor="#111111"
+                    android:textSize="34sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/selectionBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="24dp"
+                android:paddingBottom="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/cancelSelectionButton"
+                    android:layout_width="64dp"
+                    android:layout_height="40dp"
+                    android:gravity="center_vertical"
+                    android:text="取消"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/selectedCountText"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="已选择 1 本"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/groupSelectedButton"
+                    android:layout_width="52dp"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="分组"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#111111"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/markReadSelectedButton"
+                    android:layout_width="52dp"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="已读"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#111111"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/markUnreadSelectedButton"
+                    android:layout_width="52dp"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="在读"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#111111"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/deleteSelectedButton"
+                    android:layout_width="52dp"
+                    android:layout_height="40dp"
+                    android:gravity="end|center_vertical"
+                    android:text="删除"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#B95A52"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
-                android:id="@+id/groupBackButton"
-                android:layout_width="76dp"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="‹ 返回"
-                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:textColor="#111111"
-                android:textStyle="bold"
+                android:id="@+id/emptyView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingTop="80dp"
+                android:text="@string/empty_bookshelf"
+                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/readingTimeText"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/bookRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
                 android:layout_weight="1"
-                android:gravity="center_vertical"
-                android:text="累计阅读0分钟"
-                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:textColor="#111111" />
-
-            <TextView
-                android:id="@+id/readingStreakBadge"
-                android:layout_width="72dp"
-                android:layout_height="30dp"
-                android:layout_marginEnd="8dp"
-                android:background="#DDB95A52"
-                android:gravity="center"
-                android:text="连续0天"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/groupTitleText"
-                android:layout_width="0dp"
-                android:layout_height="44dp"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:gravity="center_vertical"
-                android:maxLines="1"
-                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:textColor="#111111"
-                android:textStyle="bold"
-                android:visibility="gone" />
-
-            <TextView
-                android:id="@+id/historyButton"
-                android:layout_width="48dp"
-                android:layout_height="44dp"
-                android:gravity="center"
-                android:text="◷"
-                android:textColor="#111111"
-                android:textSize="34sp" />
-
-            <TextView
-                android:id="@+id/searchButton"
-                android:layout_width="48dp"
-                android:layout_height="44dp"
-                android:gravity="center"
-                android:text="⌕"
-                android:textColor="#111111"
-                android:textSize="34sp" />
-
-            <TextView
-                android:id="@+id/moreButton"
-                android:layout_width="48dp"
-                android:layout_height="44dp"
-                android:gravity="center"
-                android:text="···"
-                android:textColor="#111111"
-                android:textSize="34sp" />
+                android:clipToPadding="false"
+                android:paddingTop="8dp"
+                android:paddingBottom="16dp" />
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/selectionBar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingTop="24dp"
-            android:paddingBottom="16dp"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/cancelSelectionButton"
-                android:layout_width="64dp"
-                android:layout_height="40dp"
-                android:gravity="center_vertical"
-                android:text="取消"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="#111111" />
-
-            <TextView
-                android:id="@+id/selectedCountText"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="已选择 1 本"
-                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                android:textColor="#111111"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/groupSelectedButton"
-                android:layout_width="52dp"
-                android:layout_height="40dp"
-                android:gravity="center"
-                android:text="分组"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="#111111"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/markReadSelectedButton"
-                android:layout_width="52dp"
-                android:layout_height="40dp"
-                android:gravity="center"
-                android:text="已读"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="#111111"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/markUnreadSelectedButton"
-                android:layout_width="52dp"
-                android:layout_height="40dp"
-                android:gravity="center"
-                android:text="在读"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="#111111"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/deleteSelectedButton"
-                android:layout_width="52dp"
-                android:layout_height="40dp"
-                android:gravity="end|center_vertical"
-                android:text="删除"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="#B95A52"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/emptyView"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="80dp"
-            android:gravity="center"
-            android:text="@string/empty_bookshelf"
-            android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-            android:visibility="gone" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/bookRecyclerView"
+        <ScrollView
+            android:id="@+id/homePage"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:clipToPadding="false"
-            android:paddingTop="8dp"
-            android:paddingBottom="96dp" />
+            android:paddingTop="32dp"
+            android:paddingBottom="18dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="主页"
+                        android:textAppearance="@style/TextAppearance.Material3.HeadlineMedium"
+                        android:textColor="#111111"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/homeAvatarButton"
+                        android:layout_width="58dp"
+                        android:layout_height="58dp"
+                        android:gravity="center"
+                        android:text="默"
+                        android:textColor="#FFFFFF"
+                        android:textSize="24sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/homeReadingTimeText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="今日目标 0/30分钟 · 0%"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="#111111" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:elevation="4dp"
+                    android:orientation="horizontal"
+                    android:padding="18dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/homeBookCountText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0本"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                            android:textColor="#111111"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="全部书籍"
+                            android:textColor="#111111"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/homeReadingCountText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0本"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                            android:textColor="#111111"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="正在阅读"
+                            android:textColor="#111111"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/homeFinishedCountText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0本"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                            android:textColor="#111111"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="已读完"
+                            android:textColor="#111111"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="26dp"
+                    android:text="常用功能"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/homeStatsButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="阅读统计"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/homeGoalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="每日阅读目标"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/homeHistoryButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="最近阅读"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/homeImportButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="本机导入"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/homeBackupButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="备份数据"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
+                    android:id="@+id/homeRestoreButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="恢复数据"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+            </LinearLayout>
+        </ScrollView>
+
+        <LinearLayout
+            android:id="@+id/bottomNavBar"
+            android:layout_width="260dp"
+            android:layout_height="56dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bottom_nav_pill_background"
+            android:elevation="8dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/bookshelfTabButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="书架"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="#B95A52"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/homeTabButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="主页"
+                android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                android:textColor="#111111" />
+        </LinearLayout>
     </LinearLayout>
 
     <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
@@ -228,7 +494,8 @@
             android:paddingEnd="24dp"
             android:text="本机导入"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="#111111" />
+            android:textColor="#111111"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/menuImportRecordsButton"
@@ -283,7 +550,8 @@
             android:paddingEnd="24dp"
             android:text="阅读统计"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="#111111" />
+            android:textColor="#111111"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/menuGoalButton"
@@ -294,7 +562,8 @@
             android:paddingEnd="24dp"
             android:text="阅读目标"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="#111111" />
+            android:textColor="#111111"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/menuBackgroundButton"
@@ -316,7 +585,8 @@
             android:paddingEnd="24dp"
             android:text="备份数据"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="#111111" />
+            android:textColor="#111111"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/menuRestoreButton"
@@ -327,7 +597,8 @@
             android:paddingEnd="24dp"
             android:text="恢复数据"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-            android:textColor="#111111" />
+            android:textColor="#111111"
+            android:visibility="gone" />
     </LinearLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

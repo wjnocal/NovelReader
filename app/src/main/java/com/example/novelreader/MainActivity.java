@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -22,6 +23,7 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.NumberPicker;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -54,6 +56,8 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -76,6 +80,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_DAILY_GOAL_MINUTES = "dailyGoalMinutes";
     private static final int SORT_RECENT = 0;
     private static final int SORT_NAME = 1;
+    private static final int TAB_BOOKSHELF = 0;
+    private static final int TAB_HOME = 1;
     private static final String CATEGORY_ALL = "全部";
     private static final String CATEGORY_READING = "在读";
     private static final String CATEGORY_FINISHED = "已读";
@@ -86,11 +92,20 @@ public class MainActivity extends AppCompatActivity {
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private AppDatabase database;
     private BooksAdapter adapter;
+    private View bookshelfPage;
+    private View homePage;
     private View bookshelfTopBar;
     private TextView groupBackButton;
     private TextView groupTitleText;
     private TextView readingTimeText;
     private TextView readingStreakBadge;
+    private TextView homeReadingTimeText;
+    private TextView homeBookCountText;
+    private TextView homeReadingCountText;
+    private TextView homeFinishedCountText;
+    private TextView homeAvatarButton;
+    private TextView bookshelfTabButton;
+    private TextView homeTabButton;
     private TextView emptyView;
     private View selectionBar;
     private TextView selectedCountText;
@@ -98,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
     private ExtendedFloatingActionButton importButton;
     private ActivityResultLauncher<String[]> importLauncher;
     private ActivityResultLauncher<String[]> backgroundLauncher;
+    private ActivityResultLauncher<String[]> avatarLauncher;
     private ActivityResultLauncher<String[]> rebindLauncher;
     private ActivityResultLauncher<String> backupLauncher;
     private ActivityResultLauncher<String[]> restoreLauncher;
@@ -109,6 +125,7 @@ public class MainActivity extends AppCompatActivity {
     private View bookActionMenuView;
     private int sortMode = SORT_RECENT;
     private int displayMode = BooksAdapter.DISPLAY_GRID;
+    private int mainTab = TAB_BOOKSHELF;
     private String categoryFilter = CATEGORY_ALL;
     private String pendingBackupJson;
     private long pendingRebindBookId = -1L;
@@ -135,11 +152,20 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
+        bookshelfPage = findViewById(R.id.bookshelfPage);
+        homePage = findViewById(R.id.homePage);
         bookshelfTopBar = findViewById(R.id.bookshelfTopBar);
         groupBackButton = findViewById(R.id.groupBackButton);
         groupTitleText = findViewById(R.id.groupTitleText);
         readingTimeText = findViewById(R.id.readingTimeText);
         readingStreakBadge = findViewById(R.id.readingStreakBadge);
+        homeReadingTimeText = findViewById(R.id.homeReadingTimeText);
+        homeBookCountText = findViewById(R.id.homeBookCountText);
+        homeReadingCountText = findViewById(R.id.homeReadingCountText);
+        homeFinishedCountText = findViewById(R.id.homeFinishedCountText);
+        homeAvatarButton = findViewById(R.id.homeAvatarButton);
+        bookshelfTabButton = findViewById(R.id.bookshelfTabButton);
+        homeTabButton = findViewById(R.id.homeTabButton);
         emptyView = findViewById(R.id.emptyView);
         selectionBar = findViewById(R.id.selectionBar);
         selectedCountText = findViewById(R.id.selectedCountText);
@@ -151,6 +177,12 @@ public class MainActivity extends AppCompatActivity {
         TextView historyButton = findViewById(R.id.historyButton);
         TextView searchButton = findViewById(R.id.searchButton);
         TextView moreButton = findViewById(R.id.moreButton);
+        TextView homeStatsButton = findViewById(R.id.homeStatsButton);
+        TextView homeGoalButton = findViewById(R.id.homeGoalButton);
+        TextView homeHistoryButton = findViewById(R.id.homeHistoryButton);
+        TextView homeImportButton = findViewById(R.id.homeImportButton);
+        TextView homeBackupButton = findViewById(R.id.homeBackupButton);
+        TextView homeRestoreButton = findViewById(R.id.homeRestoreButton);
         moreMenuPanel = findViewById(R.id.moreMenuPanel);
         TextView menuImportButton = findViewById(R.id.menuImportButton);
         TextView menuImportRecordsButton = findViewById(R.id.menuImportRecordsButton);
@@ -211,6 +243,7 @@ public class MainActivity extends AppCompatActivity {
 
         importLauncher = registerForActivityResult(new ActivityResultContracts.OpenMultipleDocuments(), this::handleImportUris);
         backgroundLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleBackgroundUri);
+        avatarLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleAvatarUri);
         rebindLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleRebindUri);
         backupLauncher = registerForActivityResult(new ActivityResultContracts.CreateDocument("application/json"), this::writeBackupToUri);
         restoreLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::restoreFromUri);
@@ -221,6 +254,7 @@ public class MainActivity extends AppCompatActivity {
         };
         importButton.setOnClickListener(importClickListener);
         menuImportButton.setOnClickListener(importClickListener);
+        homeImportButton.setOnClickListener(importClickListener);
         menuImportRecordsButton.setOnClickListener(v -> showImportRecordsDialog());
         cancelSelectionButton.setOnClickListener(v -> exitSelectionMode());
         groupSelectedButton.setOnClickListener(v -> showGroupSelectedDialog());
@@ -236,16 +270,27 @@ public class MainActivity extends AppCompatActivity {
         menuCategoryButton.setOnClickListener(v -> showCategoryDialog());
         menuStatsButton.setOnClickListener(v -> showStatsDialog());
         menuGoalButton.setOnClickListener(v -> showReadingGoalDialog());
+        homeStatsButton.setOnClickListener(v -> showStatsDialog());
+        homeGoalButton.setOnClickListener(v -> showReadingGoalDialog());
+        homeHistoryButton.setOnClickListener(v -> showHistoryDialog());
+        homeAvatarButton.setOnClickListener(v -> showUserProfilePanel());
+        bookshelfTabButton.setOnClickListener(v -> switchMainTab(TAB_BOOKSHELF));
+        homeTabButton.setOnClickListener(v -> switchMainTab(TAB_HOME));
         menuBackgroundButton.setOnClickListener(v -> showBookshelfBackgroundDialog());
         menuBackupButton.setOnClickListener(v -> startBackup());
-        menuRestoreButton.setOnClickListener(v -> {
+        homeBackupButton.setOnClickListener(v -> startBackup());
+        View.OnClickListener restoreClickListener = v -> {
             hideMoreMenu();
             restoreLauncher.launch(new String[]{"application/json", "text/plain", "application/octet-stream"});
-        });
+        };
+        menuRestoreButton.setOnClickListener(restoreClickListener);
+        homeRestoreButton.setOnClickListener(restoreClickListener);
         updateDisplayModeText();
         updateReadingTimeText();
         applyBookshelfBackground();
+        updateHomeAvatar();
         updateGroupHeader();
+        switchMainTab(TAB_BOOKSHELF);
     }
 
     @Override
@@ -253,6 +298,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         hideSystemBars();
         updateReadingTimeText();
+        updateHomeAvatar();
         loadBooks();
     }
 
@@ -272,6 +318,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
+        if (mainTab == TAB_HOME) {
+            switchMainTab(TAB_BOOKSHELF);
+            return;
+        }
         if (bookActionPopup != null && bookActionPopup.isShowing()) {
             hideBookActionMenu();
             return;
@@ -513,6 +563,16 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void handleAvatarUri(Uri uri) {
+        if (uri == null) {
+            return;
+        }
+        persistUriPermission(uri);
+        UserProfile.saveAvatarUri(this, uri);
+        updateHomeAvatar();
+        Toast.makeText(this, "头像已更新", Toast.LENGTH_SHORT).show();
+    }
+
     private void loadBooks() {
         executor.execute(() -> {
             List<BookEntity> books = database.bookDao().getAll();
@@ -524,11 +584,345 @@ public class MainActivity extends AppCompatActivity {
                 currentFolderMetas.addAll(folderMetas);
                 submitSortedBooks();
                 updateGroupHeader();
+                updateHomePageStats();
                 if (adapter.isSelectionMode()) {
                     updateSelectionUi();
                 }
             });
         });
+    }
+
+    private void switchMainTab(int tab) {
+        mainTab = tab;
+        hideMoreMenu();
+        hideBookActionMenu();
+        if (tab == TAB_HOME && adapter != null && adapter.isSelectionMode()) {
+            exitSelectionMode();
+        }
+        boolean showBookshelf = tab == TAB_BOOKSHELF;
+        if (bookshelfPage != null) {
+            bookshelfPage.setVisibility(showBookshelf ? View.VISIBLE : View.GONE);
+        }
+        if (homePage != null) {
+            homePage.setVisibility(showBookshelf ? View.GONE : View.VISIBLE);
+            if (!showBookshelf) {
+                homePage.setAlpha(0f);
+                homePage.setTranslationY(dpToPx(12));
+                homePage.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(180)
+                        .setInterpolator(new DecelerateInterpolator(1.3f))
+                        .start();
+            }
+        }
+        updateMainTabStyle();
+        updateHomePageStats();
+    }
+
+    private void updateMainTabStyle() {
+        updateTabButtonStyle(bookshelfTabButton, mainTab == TAB_BOOKSHELF);
+        updateTabButtonStyle(homeTabButton, mainTab == TAB_HOME);
+    }
+
+    private void updateTabButtonStyle(TextView tabButton, boolean selected) {
+        if (tabButton == null) {
+            return;
+        }
+        tabButton.setTextColor(selected ? Color.rgb(185, 90, 82) : Color.rgb(17, 17, 17));
+        tabButton.setTypeface(null, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+    }
+
+    private void updateHomePageStats() {
+        if (homeReadingTimeText != null && readingTimeText != null) {
+            homeReadingTimeText.setText(readingTimeText.getText());
+        }
+        if (homeBookCountText == null || homeReadingCountText == null || homeFinishedCountText == null) {
+            return;
+        }
+        int finishedCount = 0;
+        for (BookEntity book : currentBooks) {
+            if (book.finishedAt > 0L) {
+                finishedCount++;
+            }
+        }
+        int totalCount = currentBooks.size();
+        int readingCount = Math.max(0, totalCount - finishedCount);
+        homeBookCountText.setText(totalCount + "本");
+        homeReadingCountText.setText(readingCount + "本");
+        homeFinishedCountText.setText(finishedCount + "本");
+    }
+
+    private void updateHomeAvatar() {
+        if (homeAvatarButton != null) {
+            UserProfile.applyAvatar(homeAvatarButton, this, dpToPx(58));
+        }
+    }
+
+    private void showUserProfilePanel() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+
+        TextView avatar = new TextView(this);
+        UserProfile.applyAvatar(avatar, this, dpToPx(76));
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dpToPx(76), dpToPx(76));
+        avatarParams.setMargins(0, 0, 0, dpToPx(10));
+        content.addView(avatar, avatarParams);
+
+        TextView name = createDialogTitle(UserProfile.name(this));
+        name.setGravity(android.view.Gravity.CENTER);
+        content.addView(name);
+
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setAlpha(0f);
+        content.addView(menu, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        menu.addView(createProfileOption("更改头像", v -> {
+            dialog.dismiss();
+            avatarLauncher.launch(new String[]{"image/*"});
+        }));
+        menu.addView(createProfileOption("更改名称", v -> {
+            dialog.dismiss();
+            showChangeUserNameDialog();
+        }));
+        menu.addView(createProfileOption("通用设置", v -> {
+            dialog.dismiss();
+            showGeneralSettingsDialog();
+        }));
+        menu.addView(createProfileOption("关于软件", v -> {
+            dialog.dismiss();
+            showAboutSoftwareDialog();
+        }));
+        menu.addView(createProfileOption("切换账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
+        menu.addView(createProfileOption("退出账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
+
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+        avatar.setScaleX(0.45f);
+        avatar.setScaleY(0.45f);
+        avatar.setTranslationY(-dpToPx(26));
+        avatar.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .translationY(0f)
+                .setDuration(240)
+                .setInterpolator(new DecelerateInterpolator(1.5f))
+                .start();
+        menu.animate()
+                .alpha(1f)
+                .setStartDelay(110)
+                .setDuration(180)
+                .start();
+    }
+
+    private TextView createProfileOption(String text, View.OnClickListener listener) {
+        TextView option = createDialogOption(text, listener);
+        option.setMinHeight(dpToPx(52));
+        option.setPadding(dpToPx(18), 0, dpToPx(18), 0);
+        return option;
+    }
+
+    private void showChangeUserNameDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("更改名称"));
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(UserProfile.name(this));
+        input.setSelectAllOnFocus(true);
+        input.setTextColor(0xFF111111);
+        input.setHintTextColor(0xFF777777);
+        content.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("取消", v -> dialog.dismiss()));
+        actions.addView(createDialogOption("保存", v -> {
+            String newName = input.getText().toString().trim();
+            if (!isValidUserName(newName)) {
+                Toast.makeText(this, "名称需为中文0-10字、英文0-20字母，可混搭", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            UserProfile.saveName(this, newName);
+            updateHomeAvatar();
+            dialog.dismiss();
+            Toast.makeText(this, "名称已更新", Toast.LENGTH_SHORT).show();
+        }));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+        input.requestFocus();
+    }
+
+    private boolean isValidUserName(String name) {
+        if (name == null) {
+            return false;
+        }
+        int chineseCount = 0;
+        int englishCount = 0;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (isChineseChar(c)) {
+                chineseCount++;
+            } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                englishCount++;
+            } else {
+                return false;
+            }
+        }
+        return chineseCount <= 10 && englishCount <= 20;
+    }
+
+    private boolean isChineseChar(char c) {
+        return c >= '\u4E00' && c <= '\u9FFF';
+    }
+
+    private void showGeneralSettingsDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("通用设置"));
+        content.addView(createDialogOption("阅读主题跟随系统：" + (UserProfile.followSystemTheme(this) ? "开" : "关"), v -> {
+            boolean enabled = !UserProfile.followSystemTheme(this);
+            UserProfile.setFollowSystemTheme(this, enabled);
+            dialog.dismiss();
+            Toast.makeText(this, enabled ? "已开启跟随系统" : "已关闭跟随系统", Toast.LENGTH_SHORT).show();
+        }));
+        content.addView(createDialogOption("清除缓存", v -> {
+            dialog.dismiss();
+            showClearCacheDialog();
+        }));
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void showClearCacheDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("清除缓存"));
+        content.addView(createDialogOption("清除阅读记录", v -> {
+            clearReadingRecords();
+            dialog.dismiss();
+        }));
+        content.addView(createDialogOption("清除导入记录", v -> {
+            clearImportRecords();
+            dialog.dismiss();
+        }));
+        content.addView(createDialogOption("清除阅读统计", v -> {
+            clearReadingStats();
+            dialog.dismiss();
+        }));
+        content.addView(createDialogOption("清除历史头像图片", v -> {
+            UserProfile.clearAvatar(this);
+            updateHomeAvatar();
+            dialog.dismiss();
+            Toast.makeText(this, "已清除头像", Toast.LENGTH_SHORT).show();
+        }));
+        content.addView(createDialogOption("清除背景图片", v -> {
+            prefs.edit().remove(KEY_BOOKSHELF_BG_URI).apply();
+            applyBookshelfBackground();
+            dialog.dismiss();
+            Toast.makeText(this, "已清除背景图片", Toast.LENGTH_SHORT).show();
+        }));
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void clearReadingRecords() {
+        executor.execute(() -> {
+            database.bookDao().clearReadingProgress();
+            runOnUiThread(() -> {
+                loadBooks();
+                Toast.makeText(this, "已清除阅读记录", Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
+
+    private void clearImportRecords() {
+        executor.execute(() -> {
+            database.importRecordDao().deleteAll();
+            runOnUiThread(() -> Toast.makeText(this, "已清除导入记录", Toast.LENGTH_SHORT).show());
+        });
+    }
+
+    private void clearReadingStats() {
+        prefs.edit().remove(KEY_TOTAL_READING_MILLIS).apply();
+        executor.execute(() -> {
+            database.dailyReadingDao().deleteAll();
+            runOnUiThread(() -> {
+                updateReadingTimeText();
+                Toast.makeText(this, "已清除阅读统计", Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
+
+    private void showAboutSoftwareDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+        content.addView(createDialogTitle("关于软件"));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.mipmap.ic_app_icon);
+        icon.setAdjustViewBounds(true);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dpToPx(86), dpToPx(86));
+        iconParams.setMargins(0, dpToPx(12), 0, dpToPx(20));
+        content.addView(icon, iconParams);
+
+        TextView name = createDialogMessage(getString(R.string.app_name) + " " + getVersionName());
+        name.setGravity(android.view.Gravity.CENTER);
+        name.setTextSize(19f);
+        name.setTextColor(0xFF111111);
+        content.addView(name);
+
+        TextView words = createDialogMessage("开发者的话：来点彩蛋找一找，找一找。");
+        words.setGravity(android.view.Gravity.CENTER);
+        words.setPadding(0, dpToPx(24), 0, dpToPx(12));
+        final int[] easterTapCount = {0};
+        words.setOnClickListener(v -> {
+            easterTapCount[0]++;
+            if (easterTapCount[0] >= 5) {
+                easterTapCount[0] = 0;
+                showDeveloperEasterEggDialog();
+            }
+        });
+        content.addView(words);
+
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void showDeveloperEasterEggDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("彩蛋"));
+        TextView message = createDialogMessage("你居然真的点进来了。\n\n"
+                + "完了，这里本来是开发者用来偷偷发疯的地方，没想到被你发现了。\n\n"
+                + "既然你已经看到了，那我也不装了：这个小说阅读器表面上是在翻书，实际上是在偷偷记录你每次“再看一章就睡”的谎言。\n\n"
+                + "系统已检测到：你嘴上说睡觉，手指还在下滑。\n\n"
+                + "温馨提示：继续阅读不会变强，但会让明天的你想穿越回来打你。\n\n"
+                + "——开发者，已笑疯");
+        message.setLineSpacing(dpToPx(3), 1.05f);
+        content.addView(message);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("知道了", v -> dialog.dismiss()));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private String getVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "未知版本";
+        }
     }
 
     private void enterSelectionMode(BookEntity book) {
@@ -1852,6 +2246,7 @@ public class MainActivity extends AppCompatActivity {
                 if (readingStreakBadge != null) {
                     readingStreakBadge.setText("连续" + streak + "天");
                 }
+                updateHomePageStats();
             });
         });
     }
@@ -1861,17 +2256,122 @@ public class MainActivity extends AppCompatActivity {
         Dialog dialog = createPlainDialog();
         LinearLayout content = createDialogContent();
         content.addView(createDialogTitle("每日阅读目标"));
-        int current = prefs.getInt(KEY_DAILY_GOAL_MINUTES, 30);
-        int[] options = new int[]{15, 30, 60};
-        for (int minutes : options) {
-            content.addView(createDialogOption((current == minutes ? "✓ " : "") + minutes + " 分钟", v -> {
-                prefs.edit().putInt(KEY_DAILY_GOAL_MINUTES, minutes).apply();
-                updateReadingTimeText();
-                dialog.dismiss();
-            }));
-        }
+        int current = Math.max(0, Math.min(23 * 60 + 59, prefs.getInt(KEY_DAILY_GOAL_MINUTES, 30)));
+
+        LinearLayout pickerRow = new LinearLayout(this);
+        pickerRow.setOrientation(LinearLayout.HORIZONTAL);
+        pickerRow.setGravity(android.view.Gravity.CENTER);
+        pickerRow.setPadding(0, dpToPx(8), 0, dpToPx(16));
+
+        NumberPicker hourPicker = createGoalNumberPicker(0, 23, current / 60, "%02d h");
+        NumberPicker minutePicker = createGoalNumberPicker(0, 59, current % 60, "%02d min");
+        pickerRow.addView(hourPicker);
+        pickerRow.addView(minutePicker);
+        content.addView(pickerRow);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("取消", v -> dialog.dismiss()));
+        actions.addView(createDialogOption("保存", v -> {
+            int goalMinutes = hourPicker.getValue() * 60 + minutePicker.getValue();
+            prefs.edit().putInt(KEY_DAILY_GOAL_MINUTES, goalMinutes).apply();
+            updateReadingTimeText();
+            dialog.dismiss();
+        }));
+        content.addView(actions);
         dialog.setContentView(content);
         showPlainDialog(dialog);
+    }
+
+    private NumberPicker createGoalNumberPicker(int min, int max, int value, String format) {
+        NumberPicker picker = new NumberPicker(this);
+        picker.setMinValue(min);
+        picker.setMaxValue(max);
+        picker.setValue(value);
+        picker.setWrapSelectorWheel(false);
+        picker.setFormatter(number -> String.format(Locale.getDefault(), format, number));
+        picker.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dpToPx(150), 1f);
+        params.setMargins(dpToPx(6), 0, dpToPx(6), 0);
+        picker.setLayoutParams(params);
+        styleGoalNumberPicker(picker);
+        return picker;
+    }
+
+    private void styleGoalNumberPicker(NumberPicker picker) {
+        picker.setBackgroundColor(Color.TRANSPARENT);
+        picker.setAlpha(1f);
+        picker.setFadingEdgeLength(0);
+        picker.setVerticalFadingEdgeEnabled(false);
+        applyNumberPickerInternals(picker);
+        picker.setOnValueChangedListener((numberPicker, oldValue, newValue) ->
+                numberPicker.post(() -> applyNumberPickerInternals(numberPicker)));
+        picker.post(() -> applyNumberPickerInternals(picker));
+    }
+
+    private void applyNumberPickerInternals(NumberPicker picker) {
+        styleNumberPickerText(picker);
+        invokeNumberPickerColorSetter(picker, "setTextColor", 0xFF111111);
+        invokeNumberPickerColorSetter(picker, "setSelectedTextColor", 0xFF111111);
+        setNumberPickerIntField(picker, "mTextColor", 0xFF111111);
+        setNumberPickerIntField(picker, "mSelectedTextColor", 0xFF111111);
+        setNumberPickerIntField(picker, "mSelectorElementHeight", dpToPx(42));
+        try {
+            Field paintField = NumberPicker.class.getDeclaredField("mSelectorWheelPaint");
+            paintField.setAccessible(true);
+            Object paint = paintField.get(picker);
+            if (paint instanceof Paint) {
+                Paint selectorPaint = (Paint) paint;
+                selectorPaint.setColor(0xFF111111);
+                selectorPaint.setAlpha(255);
+                selectorPaint.setTextSize(dpToPx(18));
+                selectorPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            }
+        } catch (Exception ignored) {
+            // Some Android builds hide this field; child TextView styling still keeps the value readable.
+        }
+        try {
+            Field dividerField = NumberPicker.class.getDeclaredField("mSelectionDivider");
+            dividerField.setAccessible(true);
+            dividerField.set(picker, new ColorDrawable(0x99111111));
+        } catch (Exception ignored) {
+            // Divider access is platform-dependent, so failures are harmless.
+        }
+        picker.invalidate();
+    }
+
+    private void invokeNumberPickerColorSetter(NumberPicker picker, String methodName, int color) {
+        try {
+            Method method = NumberPicker.class.getMethod(methodName, int.class);
+            method.invoke(picker, color);
+        } catch (Exception ignored) {
+            // Older Android versions do not expose these setters.
+        }
+    }
+
+    private void setNumberPickerIntField(NumberPicker picker, String fieldName, int value) {
+        try {
+            Field field = NumberPicker.class.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.setInt(picker, value);
+        } catch (Exception ignored) {
+            // Field names vary across Android versions.
+        }
+    }
+
+    private void styleNumberPickerText(View view) {
+        if (view instanceof TextView) {
+            TextView textView = (TextView) view;
+            textView.setTextColor(0xFF111111);
+            textView.setTextSize(18f);
+            textView.setTypeface(null, android.graphics.Typeface.BOLD);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                styleNumberPickerText(group.getChildAt(i));
+            }
+        }
     }
 
     private Dialog createPlainDialog() {

@@ -17,4 +17,7 @@ public interface DailyReadingDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void save(DailyReadingEntity entity);
+
+    @Query("DELETE FROM daily_reading")
+    void deleteAll();
 }

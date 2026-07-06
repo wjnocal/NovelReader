@@ -7,13 +7,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Layout;
-import android.text.SpannableString;
+import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextPaint;
@@ -22,10 +23,15 @@ import android.text.style.BackgroundColorSpan;
 import android.text.style.CharacterStyle;
 import android.text.style.LeadingMarginSpan;
 import android.text.style.RelativeSizeSpan;
+import android.text.style.ReplacementSpan;
 import android.text.style.StyleSpan;
 import android.text.style.UpdateAppearance;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.view.GestureDetector;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -56,6 +62,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.novelreader.R;
+import com.example.novelreader.UserProfile;
 import com.example.novelreader.data.AppDatabase;
 import com.example.novelreader.data.BookEntity;
 import com.example.novelreader.data.BookmarkEntity;
@@ -283,10 +290,33 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (event == null || event.getRepeatCount() == 0) {
+                handleVolumePageKey(keyCode);
+            }
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         statusHandler.removeCallbacks(statusRunnable);
         executor.shutdown();
+    }
+
+    private void handleVolumePageKey(int keyCode) {
+        if (book == null || textSelectionActive || pageAnimating || pageDragActive) {
+            return;
+        }
+        setReaderControlsVisible(false, true);
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            previousPage();
+        } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            nextPage();
+        }
     }
 
     private void bindViews() {
@@ -482,6 +512,14 @@ public class ReaderActivity extends AppCompatActivity {
             }
             if (handlePagedDragTouch(event)) {
                 return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                CommentBubbleSpan bubble = findCommentBubbleAtTouch(event);
+                if (bubble != null) {
+                    setReaderControlsVisible(false, true);
+                    showCommentSheetForRange(bubble.target.selectedText, bubble.target.start, bubble.target.end, false);
+                    return true;
+                }
             }
             gestureDetector.onTouchEvent(event);
             return isPagedMode();
@@ -703,11 +741,13 @@ public class ReaderActivity extends AppCompatActivity {
         int safeIndex = Math.max(0, Math.min(pageIndex, currentPages.size() - 1));
         PageInfo page = currentPages.get(safeIndex);
         CharSequence oldPageText = direction == 0 ? null : contentView.getText();
+        if (direction != 0) {
+            primePageTransition(oldPageText, direction);
+        }
         book.currentPageIndex = safeIndex;
         book.currentPageStartOffset = page.start;
         renderedTextStartOffset = page.start;
         contentView.setText(formatTextSlice(page.start, page.end));
-        contentView.post(this::renderCommentBubbles);
         pageIndicator.setText((safeIndex + 1) + "/" + currentPages.size());
         pageIndicator.setVisibility(readerControlsVisible ? View.VISIBLE : View.GONE);
         updateBookmarkButton();
@@ -727,7 +767,7 @@ public class ReaderActivity extends AppCompatActivity {
         int safeStart = Math.max(0, Math.min(start, currentDisplayText.length()));
         int safeEnd = Math.max(safeStart, Math.min(end, currentDisplayText.length()));
         String pageText = currentDisplayText.substring(safeStart, safeEnd);
-        SpannableString styled = new SpannableString(pageText);
+        SpannableStringBuilder styled = new SpannableStringBuilder(pageText);
         if (safeStart == 0 && currentTitleLength > 0) {
             int titleEnd = Math.min(currentTitleLength, pageText.length());
             styled.setSpan(
@@ -742,10 +782,11 @@ public class ReaderActivity extends AppCompatActivity {
         applyFirstLineIndent(styled, pageText, safeStart);
         applyNoteUnderlines(styled, safeStart, safeEnd);
         applyActiveSelectionHighlight(styled, safeStart, safeEnd);
+        appendCommentBubbles(styled, safeStart, safeEnd);
         return styled;
     }
 
-    private void applyActiveSelectionHighlight(SpannableString styled, int sliceStart, int sliceEnd) {
+    private void applyActiveSelectionHighlight(SpannableStringBuilder styled, int sliceStart, int sliceEnd) {
         if (!textSelectionActive || textSelectionStart < 0 || textSelectionEnd <= textSelectionStart) {
             return;
         }
@@ -756,7 +797,7 @@ public class ReaderActivity extends AppCompatActivity {
         }
     }
 
-    private void applyFirstLineIndent(SpannableString styled, String pageText, int sliceStart) {
+    private void applyFirstLineIndent(SpannableStringBuilder styled, String pageText, int sliceStart) {
         if (settings == null || settings.firstLineIndentEm <= 0f || TextUtils.isEmpty(pageText)) {
             return;
         }
@@ -781,7 +822,7 @@ public class ReaderActivity extends AppCompatActivity {
         }
     }
 
-    private void applyNoteUnderlines(SpannableString styled, int sliceStart, int sliceEnd) {
+    private void applyNoteUnderlines(SpannableStringBuilder styled, int sliceStart, int sliceEnd) {
         if (notes == null || notes.isEmpty() || book == null) {
             return;
         }
@@ -809,6 +850,28 @@ public class ReaderActivity extends AppCompatActivity {
         }
     }
 
+    private void appendCommentBubbles(SpannableStringBuilder styled, int sliceStart, int sliceEnd) {
+        if (notes == null || notes.isEmpty() || book == null || styled == null) {
+            return;
+        }
+        List<CommentBubbleTarget> targets = collectCommentBubbleTargets(sliceStart, sliceEnd);
+        targets.sort((a, b) -> Integer.compare(b.end, a.end));
+        for (CommentBubbleTarget target : targets) {
+            if (target.end > sliceEnd) {
+                continue;
+            }
+            int localEnd = Math.max(0, Math.min(styled.length(), target.end - sliceStart));
+            if (localEnd < 0 || localEnd > styled.length()) {
+                continue;
+            }
+            String marker = " \uFFFC";
+            styled.insert(localEnd, marker);
+            int spanStart = localEnd + 1;
+            int spanEnd = localEnd + marker.length();
+            styled.setSpan(new CommentBubbleSpan(target), spanStart, spanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+    }
+
     private NoteEntity findNoteAtTouch(TextView textView, MotionEvent event) {
         if (notes == null || notes.isEmpty() || textView.getLayout() == null || book == null) {
             return null;
@@ -833,6 +896,32 @@ public class ReaderActivity extends AppCompatActivity {
             }
         }
         return null;
+    }
+
+    private CommentBubbleSpan findCommentBubbleAtTouch(MotionEvent event) {
+        if (contentView == null || contentView.getLayout() == null || !(contentView.getText() instanceof Spanned)) {
+            return null;
+        }
+        int[] contentLocation = new int[2];
+        contentView.getLocationOnScreen(contentLocation);
+        int x = Math.round(event.getRawX() - contentLocation[0]) - contentView.getTotalPaddingLeft() + contentView.getScrollX();
+        int y = Math.round(event.getRawY() - contentLocation[1]) - contentView.getTotalPaddingTop() + contentView.getScrollY();
+        if (x < 0 || y < 0) {
+            return null;
+        }
+        Layout layout = contentView.getLayout();
+        if (layout.getLineCount() == 0) {
+            return null;
+        }
+        int line = Math.max(0, Math.min(layout.getLineCount() - 1, layout.getLineForVertical(y)));
+        int offset = Math.max(0, Math.min(contentView.getText().length(), layout.getOffsetForHorizontal(line, x)));
+        Spanned spanned = (Spanned) contentView.getText();
+        int queryEnd = Math.min(spanned.length(), offset + 1);
+        CommentBubbleSpan[] spans = spanned.getSpans(offset, queryEnd, CommentBubbleSpan.class);
+        if (spans.length == 0 && offset > 0) {
+            spans = spanned.getSpans(offset - 1, offset, CommentBubbleSpan.class);
+        }
+        return spans.length == 0 ? null : spans[0];
     }
 
     private void beginTextSelection(MotionEvent event) {
@@ -1434,16 +1523,7 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void renderCommentBubbles() {
-        clearCommentBubbles();
-        if (notes == null || notes.isEmpty() || book == null || contentView.getLayout() == null || root == null) {
-            return;
-        }
-        int sliceStart = renderedTextStartOffset;
-        int sliceEnd = getRenderedSliceEnd();
-        List<CommentBubbleTarget> targets = collectCommentBubbleTargets(sliceStart, sliceEnd);
-        for (CommentBubbleTarget target : targets) {
-            addCommentBubble(target);
-        }
+        // Comment bubbles are inline spans now, so they move with text, scrolling, and page animations.
     }
 
     private List<CommentBubbleTarget> collectCommentBubbleTargets(int sliceStart, int sliceEnd) {
@@ -1475,43 +1555,9 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void addCommentBubble(CommentBubbleTarget target) {
-        Layout layout = contentView.getLayout();
-        if (layout == null) {
-            return;
-        }
-        int localEnd = Math.max(0, Math.min(contentView.getText().length(), target.end - renderedTextStartOffset));
-        int line = layout.getLineForOffset(localEnd);
-        float x = layout.getPrimaryHorizontal(localEnd);
-        int y = layout.getLineBaseline(line);
-        int[] contentLocation = new int[2];
-        int[] rootLocation = new int[2];
-        contentView.getLocationOnScreen(contentLocation);
-        root.getLocationOnScreen(rootLocation);
-
-        TextView bubble = new TextView(this);
-        bubble.setText(target.count > 100 ? "100+" : String.valueOf(target.count));
-        bubble.setTextColor(target.count > 100 ? 0xFFFFFFFF : 0xFF6A746E);
-        bubble.setTextSize(11f);
-        bubble.setGravity(android.view.Gravity.CENTER);
-        bubble.setPadding(dp(7), 0, dp(7), 0);
-        int bg = target.count > 100 ? 0xFFE45F5F : 0xFFEAF1EC;
-        bubble.setBackground(roundedBackground(bg, 10, 0x666A746E, 1));
-        bubble.setOnClickListener(v -> showCommentSheetForRange(target.selectedText, target.start, target.end, false));
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24));
-        params.leftMargin = Math.round(contentLocation[0] - rootLocation[0] + contentView.getTotalPaddingLeft() + x + dp(6));
-        params.topMargin = Math.round(contentLocation[1] - rootLocation[1] + contentView.getTotalPaddingTop() + y - dp(20));
-        root.addView(bubble, params);
-        commentBubbleViews.add(bubble);
     }
 
     private void clearCommentBubbles() {
-        if (root == null) {
-            commentBubbleViews.clear();
-            return;
-        }
-        for (View view : commentBubbleViews) {
-            root.removeView(view);
-        }
         commentBubbleViews.clear();
     }
 
@@ -1702,18 +1748,19 @@ public class ReaderActivity extends AppCompatActivity {
         setReaderControlsVisible(false, true);
 
         PageInfo targetPage = currentPages.get(targetIndex);
-        pageTransitionView.setText(pageDragSourceText == null ? "" : pageDragSourceText);
-        pageTransitionView.setVisibility(View.VISIBLE);
-        pageTransitionView.setTranslationX(0f);
-        pageTransitionView.setAlpha(1f);
-        pageTransitionView.setScaleX(1f);
-        pageTransitionView.setRotationY(0f);
-
-        contentView.setText(formatTextSlice(targetPage.start, targetPage.end));
+        int offscreen = direction < 0 ? dragWidth() : -dragWidth();
+        contentView.setText(pageDragSourceText == null ? "" : pageDragSourceText);
+        contentView.setTranslationX(0f);
         contentView.setAlpha(1f);
         contentView.setScaleX(1f);
         contentView.setRotationY(0f);
-        contentView.setTranslationX(direction < 0 ? dragWidth() : -dragWidth());
+
+        pageTransitionView.setText(formatTextSlice(targetPage.start, targetPage.end));
+        pageTransitionView.setVisibility(View.VISIBLE);
+        pageTransitionView.setTranslationX(offscreen);
+        pageTransitionView.setAlpha(1f);
+        pageTransitionView.setScaleX(1f);
+        pageTransitionView.setRotationY(0f);
         return true;
     }
 
@@ -1743,27 +1790,27 @@ public class ReaderActivity extends AppCompatActivity {
         float progress = Math.min(1f, Math.abs(clampedDx) / width);
         float oldX = pageDragDirection < 0 ? -progress * width : progress * width;
         float targetX = pageDragDirection < 0 ? width - progress * width : -width + progress * width;
-        pageTransitionView.setTranslationX(oldX);
-        pageTransitionView.setAlpha(1f - progress * 0.22f);
-        contentView.setTranslationX(targetX);
-        contentView.setAlpha(0.72f + progress * 0.28f);
+        contentView.setTranslationX(oldX);
+        contentView.setAlpha(1f - progress * 0.22f);
+        pageTransitionView.setTranslationX(targetX);
+        pageTransitionView.setAlpha(0.72f + progress * 0.28f);
     }
 
     private void finishPageDrag(boolean canComplete) {
         int width = dragWidth();
-        boolean complete = canComplete && width > 0 && Math.abs(pageDragLastDx) >= width / 3f;
+        boolean complete = canComplete && width > 0 && Math.abs(pageDragLastDx) >= width / 10f;
         contentView.animate().cancel();
         pageTransitionView.animate().cancel();
         if (complete) {
             float oldEnd = pageDragDirection < 0 ? -width : width;
             PathInterpolator interpolator = new PathInterpolator(0.22f, 0f, 0f, 1f);
-            pageTransitionView.animate()
+            contentView.animate()
                     .translationX(oldEnd)
                     .alpha(0.35f)
                     .setDuration(180)
                     .setInterpolator(interpolator)
                     .start();
-            contentView.animate()
+            pageTransitionView.animate()
                     .translationX(0f)
                     .alpha(1f)
                     .setDuration(180)
@@ -1773,13 +1820,13 @@ public class ReaderActivity extends AppCompatActivity {
         } else {
             float targetOffscreen = pageDragDirection < 0 ? width : -width;
             PathInterpolator interpolator = new PathInterpolator(0.22f, 0f, 0f, 1f);
-            pageTransitionView.animate()
+            contentView.animate()
                     .translationX(0f)
                     .alpha(1f)
                     .setDuration(160)
                     .setInterpolator(interpolator)
                     .start();
-            contentView.animate()
+            pageTransitionView.animate()
                     .translationX(targetOffscreen)
                     .alpha(0.72f)
                     .setDuration(160)
@@ -1855,10 +1902,12 @@ public class ReaderActivity extends AppCompatActivity {
         pageTransitionView.animate().cancel();
 
         if (settings != null && settings.pageTurnMode == 1) {
-            pageTransitionView.setText(oldPageText == null ? "" : oldPageText);
-            pageTransitionView.setVisibility(View.VISIBLE);
-            pageTransitionView.setTranslationX(0f);
-            pageTransitionView.setAlpha(1f);
+            if (pageTransitionView.getVisibility() != View.VISIBLE) {
+                pageTransitionView.setText(oldPageText == null ? "" : oldPageText);
+                pageTransitionView.setVisibility(View.VISIBLE);
+                pageTransitionView.setTranslationX(0f);
+                pageTransitionView.setAlpha(1f);
+            }
             pageTransitionView.setPivotX(direction < 0 ? 0f : width);
             pageTransitionView.setPivotY(pageTransitionView.getHeight() / 2f);
             contentView.setTranslationX(0f);
@@ -1890,12 +1939,14 @@ public class ReaderActivity extends AppCompatActivity {
 
         float newStart = direction < 0 ? width : -width;
         float oldEnd = direction < 0 ? -width : width;
-        pageTransitionView.setText(oldPageText == null ? "" : oldPageText);
-        pageTransitionView.setVisibility(View.VISIBLE);
-        pageTransitionView.setTranslationX(0f);
-        pageTransitionView.setAlpha(1f);
+        if (pageTransitionView.getVisibility() != View.VISIBLE) {
+            pageTransitionView.setText(oldPageText == null ? "" : oldPageText);
+            pageTransitionView.setVisibility(View.VISIBLE);
+            pageTransitionView.setTranslationX(0f);
+            pageTransitionView.setAlpha(1f);
+        }
         contentView.setTranslationX(newStart);
-        contentView.setAlpha(0.58f);
+        contentView.setAlpha(Math.max(0.58f, contentView.getAlpha()));
 
         PathInterpolator interpolator = new PathInterpolator(0.22f, 0f, 0f, 1f);
         pageTransitionView.animate()
@@ -1914,6 +1965,25 @@ public class ReaderActivity extends AppCompatActivity {
                     resetPageTransition();
                 })
                 .start();
+    }
+
+    private void primePageTransition(CharSequence oldPageText, int direction) {
+        int width = Math.max(contentView.getWidth(), root.getWidth());
+        if (width <= 0) {
+            return;
+        }
+        contentView.animate().cancel();
+        pageTransitionView.animate().cancel();
+        pageTransitionView.setText(oldPageText == null ? "" : oldPageText);
+        pageTransitionView.setVisibility(View.VISIBLE);
+        pageTransitionView.setTranslationX(0f);
+        pageTransitionView.setAlpha(1f);
+        pageTransitionView.setScaleX(1f);
+        pageTransitionView.setRotationY(0f);
+        contentView.setTranslationX(direction < 0 ? width : -width);
+        contentView.setAlpha(settings != null && settings.pageTurnMode == 1 ? 0f : 0.58f);
+        contentView.setScaleX(1f);
+        contentView.setRotationY(0f);
     }
 
     private void resetPageTransition() {
@@ -3033,7 +3103,7 @@ public class ReaderActivity extends AppCompatActivity {
         }
         int background;
         int text;
-        switch (settings.themeMode) {
+        switch (effectiveThemeMode()) {
             case 1:
                 background = ContextCompat.getColor(this, R.color.reader_bg_dark);
                 text = ContextCompat.getColor(this, R.color.reader_text_dark);
@@ -3081,7 +3151,8 @@ public class ReaderActivity extends AppCompatActivity {
             typeface = Typeface.DEFAULT;
         }
         int horizontalPadding = dp(settings.pageMarginDp);
-        int topPadding = dp(Math.max(12, settings.pageMarginDp));
+        int cameraSafeTopOffset = Math.round(settings.textSizeSp * getResources().getDisplayMetrics().scaledDensity * settings.lineSpacingMultiplier);
+        int topPadding = dp(Math.max(12, settings.pageMarginDp)) + cameraSafeTopOffset;
         int bottomPadding = dp(Math.max(48, settings.pageMarginDp + 26));
         contentView.setTypeface(typeface);
         contentView.setTextSize(settings.textSizeSp);
@@ -3093,6 +3164,14 @@ public class ReaderActivity extends AppCompatActivity {
         pageTransitionView.setPadding(horizontalPadding, topPadding, horizontalPadding, bottomPadding);
         previousButton.setTextColor(0xFFD8D0C8);
         nextButton.setTextColor(0xFFD8D0C8);
+    }
+
+    private int effectiveThemeMode() {
+        if (!UserProfile.followSystemTheme(this)) {
+            return settings.themeMode;
+        }
+        int nightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return nightMode == Configuration.UI_MODE_NIGHT_YES ? 1 : 0;
     }
 
     private void saveSettings() {
@@ -3142,6 +3221,68 @@ public class ReaderActivity extends AppCompatActivity {
             textPaint.setUnderlineText(true);
             textPaint.underlineColor = color;
             textPaint.underlineThickness = Math.max(2.5f, textPaint.density * 2.5f);
+        }
+    }
+
+    private class CommentBubbleSpan extends ReplacementSpan {
+        final CommentBubbleTarget target;
+        private final String label;
+
+        CommentBubbleSpan(CommentBubbleTarget target) {
+            this.target = target;
+            this.label = target.count > 100 ? "100+" : String.valueOf(target.count);
+        }
+
+        @Override
+        public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
+            int height = dp(20);
+            if (fm != null) {
+                fm.ascent = Math.min(fm.ascent, -height);
+                fm.top = Math.min(fm.top, -height);
+                fm.descent = Math.max(fm.descent, dp(4));
+                fm.bottom = Math.max(fm.bottom, dp(4));
+            }
+            float oldTextSize = paint.getTextSize();
+            paint.setTextSize(11f * getResources().getDisplayMetrics().scaledDensity);
+            int width = Math.round(paint.measureText(label)) + dp(16);
+            paint.setTextSize(oldTextSize);
+            return width;
+        }
+
+        @Override
+        public void draw(Canvas canvas, CharSequence text, int start, int end, float x, int top, int y, int bottom, Paint paint) {
+            int oldColor = paint.getColor();
+            Paint.Style oldStyle = paint.getStyle();
+            float oldTextSize = paint.getTextSize();
+            float oldStrokeWidth = paint.getStrokeWidth();
+            boolean oldAntiAlias = paint.isAntiAlias();
+
+            paint.setAntiAlias(true);
+            paint.setTextSize(11f * getResources().getDisplayMetrics().scaledDensity);
+            float width = paint.measureText(label) + dp(16);
+            float height = dp(20);
+            float rectTop = y - height + dp(2);
+            RectF rect = new RectF(x, rectTop, x + width, rectTop + height);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(target.count > 100 ? 0xFFE45F5F : 0xFFEAF1EC);
+            canvas.drawRoundRect(rect, dp(9), dp(9), paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1f, getResources().getDisplayMetrics().density));
+            paint.setColor(0x666A746E);
+            canvas.drawRoundRect(rect, dp(9), dp(9), paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(target.count > 100 ? 0xFFFFFFFF : 0xFF6A746E);
+            float textX = rect.left + (width - paint.measureText(label)) / 2f;
+            float textY = rect.centerY() - (paint.descent() + paint.ascent()) / 2f;
+            canvas.drawText(label, textX, textY, paint);
+
+            paint.setColor(oldColor);
+            paint.setStyle(oldStyle);
+            paint.setTextSize(oldTextSize);
+            paint.setStrokeWidth(oldStrokeWidth);
+            paint.setAntiAlias(oldAntiAlias);
         }
     }
 
@@ -3404,7 +3545,8 @@ public class ReaderActivity extends AppCompatActivity {
             holder.meta.setVisibility(View.VISIBLE);
             holder.replies.setVisibility(View.GONE);
             holder.itemView.setPadding(row.level == 0 ? 0 : dp(58), dp(16), 0, dp(12));
-            holder.name.setText("\u9ed8\u8ba4\u7528\u6237");
+            UserProfile.applyAvatar(holder.avatar, ReaderActivity.this, dp(44));
+            holder.name.setText(UserProfile.name(ReaderActivity.this));
             holder.content.setText(displayCommentText(comment));
             int floor = comments.indexOf(comment) + 1;
             holder.meta.setText(floor + "\u697c \u00b7 " + dateFormat.format(new Date(comment.createdAt)) + " \u00b7 \u56de\u590d");

@@ -31,6 +31,9 @@ public interface BookDao {
     @Query("UPDATE books SET category = '未分类', updatedAt = :updatedAt WHERE category = :category")
     void clearCategory(String category, long updatedAt);
 
+    @Query("UPDATE books SET currentChapterIndex = 0, scrollY = 0, currentPageIndex = 0, currentPageStartOffset = 0")
+    void clearReadingProgress();
+
     @Insert
     long insert(BookEntity book);
 

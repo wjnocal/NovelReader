@@ -14,8 +14,8 @@ android {
         applicationId = "com.example.novelreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2666
-        versionName = "2.666"
+        versionCode = 2800
+        versionName = "2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
