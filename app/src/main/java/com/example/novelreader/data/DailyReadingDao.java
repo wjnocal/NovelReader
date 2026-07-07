@@ -15,6 +15,9 @@ public interface DailyReadingDao {
     @Query("SELECT * FROM daily_reading ORDER BY date DESC LIMIT :limit")
     List<DailyReadingEntity> getRecent(int limit);
 
+    @Query("SELECT * FROM daily_reading ORDER BY date ASC")
+    List<DailyReadingEntity> getAll();
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void save(DailyReadingEntity entity);
 

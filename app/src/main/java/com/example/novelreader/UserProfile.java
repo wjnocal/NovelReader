@@ -16,6 +16,7 @@ import android.widget.TextView;
 import androidx.core.graphics.drawable.RoundedBitmapDrawable;
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
 
+import java.io.File;
 import java.io.InputStream;
 
 public final class UserProfile {
@@ -59,6 +60,7 @@ public final class UserProfile {
                 .edit()
                 .remove(KEY_AVATAR_URI)
                 .apply();
+        deleteFiles(new File(context.getFilesDir(), "avatars"));
     }
 
     public static boolean followSystemTheme(Context context) {
@@ -117,5 +119,20 @@ public final class UserProfile {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static void deleteFiles(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteFiles(child);
+                }
+            }
+        }
+        file.delete();
     }
 }

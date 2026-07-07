@@ -103,6 +103,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView homeBookCountText;
     private TextView homeReadingCountText;
     private TextView homeFinishedCountText;
+    private TextView homeTitleText;
     private TextView homeAvatarButton;
     private TextView bookshelfTabButton;
     private TextView homeTabButton;
@@ -114,6 +115,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String[]> importLauncher;
     private ActivityResultLauncher<String[]> backgroundLauncher;
     private ActivityResultLauncher<String[]> avatarLauncher;
+    private ActivityResultLauncher<Intent> avatarCropLauncher;
     private ActivityResultLauncher<String[]> rebindLauncher;
     private ActivityResultLauncher<String> backupLauncher;
     private ActivityResultLauncher<String[]> restoreLauncher;
@@ -163,6 +165,7 @@ public class MainActivity extends AppCompatActivity {
         homeBookCountText = findViewById(R.id.homeBookCountText);
         homeReadingCountText = findViewById(R.id.homeReadingCountText);
         homeFinishedCountText = findViewById(R.id.homeFinishedCountText);
+        homeTitleText = findViewById(R.id.homeTitleText);
         homeAvatarButton = findViewById(R.id.homeAvatarButton);
         bookshelfTabButton = findViewById(R.id.bookshelfTabButton);
         homeTabButton = findViewById(R.id.homeTabButton);
@@ -244,6 +247,11 @@ public class MainActivity extends AppCompatActivity {
         importLauncher = registerForActivityResult(new ActivityResultContracts.OpenMultipleDocuments(), this::handleImportUris);
         backgroundLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleBackgroundUri);
         avatarLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleAvatarUri);
+        avatarCropLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                handleCroppedAvatarResult(result.getData());
+            }
+        });
         rebindLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleRebindUri);
         backupLauncher = registerForActivityResult(new ActivityResultContracts.CreateDocument("application/json"), this::writeBackupToUri);
         restoreLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::restoreFromUri);
@@ -288,6 +296,7 @@ public class MainActivity extends AppCompatActivity {
         updateDisplayModeText();
         updateReadingTimeText();
         applyBookshelfBackground();
+        updateHomeUserName();
         updateHomeAvatar();
         updateGroupHeader();
         switchMainTab(TAB_BOOKSHELF);
@@ -298,6 +307,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         hideSystemBars();
         updateReadingTimeText();
+        updateHomeUserName();
         updateHomeAvatar();
         loadBooks();
     }
@@ -568,6 +578,14 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         persistUriPermission(uri);
+        avatarCropLauncher.launch(AvatarCropActivity.createIntent(this, uri));
+    }
+
+    private void handleCroppedAvatarResult(Intent data) {
+        Uri uri = data.getParcelableExtra(AvatarCropActivity.EXTRA_CROPPED_URI);
+        if (uri == null) {
+            return;
+        }
         UserProfile.saveAvatarUri(this, uri);
         updateHomeAvatar();
         Toast.makeText(this, "头像已更新", Toast.LENGTH_SHORT).show();
@@ -656,6 +674,12 @@ public class MainActivity extends AppCompatActivity {
     private void updateHomeAvatar() {
         if (homeAvatarButton != null) {
             UserProfile.applyAvatar(homeAvatarButton, this, dpToPx(58));
+        }
+    }
+
+    private void updateHomeUserName() {
+        if (homeTitleText != null) {
+            homeTitleText.setText(UserProfile.name(this));
         }
     }
 
@@ -750,6 +774,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             UserProfile.saveName(this, newName);
+            updateHomeUserName();
             updateHomeAvatar();
             dialog.dismiss();
             Toast.makeText(this, "名称已更新", Toast.LENGTH_SHORT).show();
@@ -902,11 +927,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout content = createDialogContent();
         content.addView(createDialogTitle("彩蛋"));
         TextView message = createDialogMessage("你居然真的点进来了。\n\n"
-                + "完了，这里本来是开发者用来偷偷发疯的地方，没想到被你发现了。\n\n"
-                + "既然你已经看到了，那我也不装了：这个小说阅读器表面上是在翻书，实际上是在偷偷记录你每次“再看一章就睡”的谎言。\n\n"
-                + "系统已检测到：你嘴上说睡觉，手指还在下滑。\n\n"
-                + "温馨提示：继续阅读不会变强，但会让明天的你想穿越回来打你。\n\n"
-                + "——开发者，已笑疯");
+                + "好吧其实这里什么都没有，你觉得彩蛋应该写什么在QQ跟我说得了。");
         message.setLineSpacing(dpToPx(3), 1.05f);
         content.addView(message);
         LinearLayout actions = new LinearLayout(this);
@@ -1789,33 +1810,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void showStatsDialog() {
         hideMoreMenu();
-        executor.execute(() -> {
-            List<com.example.novelreader.data.DailyReadingEntity> recent = database.dailyReadingDao().getRecent(7);
-            int finished = database.bookDao().countFinished();
-            int reading = database.bookDao().countReading();
-            runOnUiThread(() -> {
-                Dialog dialog = createPlainDialog();
-                LinearLayout content = createDialogContent();
-                content.addView(createDialogTitle("阅读统计"));
-                StringBuilder message = new StringBuilder();
-                message.append("今日阅读：").append(formatMinutes(getTodayMillis(recent))).append("\n");
-                message.append("累计阅读：").append(formatMinutes(prefs.getLong(KEY_TOTAL_READING_MILLIS, 0L))).append("\n");
-                message.append("连续阅读：").append(countReadingStreak(recent)).append(" 天\n");
-                message.append("在读书籍：").append(reading).append(" 本\n");
-                message.append("已读完：").append(finished).append(" 本\n\n");
-                message.append("最近 7 天：\n");
-                if (recent.isEmpty()) {
-                    message.append("暂无记录");
-                } else {
-                    for (com.example.novelreader.data.DailyReadingEntity day : recent) {
-                        message.append(day.date).append("  ").append(formatMinutes(day.readingMillis)).append("\n");
-                    }
-                }
-                content.addView(createDialogMessage(message.toString().trim()));
-                dialog.setContentView(content);
-                showPlainDialog(dialog);
-            });
-        });
+        startActivity(new Intent(this, ReadingStatsActivity.class));
     }
 
     private void showBookshelfBackgroundDialog() {

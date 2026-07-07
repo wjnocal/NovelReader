@@ -12,6 +12,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.NovelReader">
         <activity
+            android:name=".AvatarCropActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".ReadingStatsActivity"
+            android:exported="false" />
+        <activity
             android:name=".ui.ReaderActivity"
             android:exported="false" />
         <activity
