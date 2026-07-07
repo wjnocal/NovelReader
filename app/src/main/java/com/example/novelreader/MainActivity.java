@@ -1,7 +1,10 @@
 package com.example.novelreader;
 
 import android.app.Dialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -723,6 +726,10 @@ public class MainActivity extends AppCompatActivity {
         }));
         menu.addView(createProfileOption("切换账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
         menu.addView(createProfileOption("退出账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
+        menu.addView(createProfileOption("开源说明", v -> {
+            dialog.dismiss();
+            showOpenSourceNoticeDialog();
+        }));
 
         dialog.setContentView(content);
         showPlainDialog(dialog);
@@ -918,6 +925,45 @@ public class MainActivity extends AppCompatActivity {
         });
         content.addView(words);
 
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void showOpenSourceNoticeDialog() {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("开源说明"));
+        TextView message = createDialogMessage("NovelReader（小说阅读器）是一款本地小说阅读器应用。本项目源代码已公开在 GitHub，主要用于学习、交流和展示。\n\n"
+                + "项目地址：");
+        message.setLineSpacing(dpToPx(3), 1.05f);
+        content.addView(message);
+
+        String projectUrl = "https://github.com/wjnocal/NovelReader";
+        TextView urlView = createDialogMessage(projectUrl);
+        urlView.setTextColor(0xFFB64B4B);
+        urlView.setTypeface(null, android.graphics.Typeface.BOLD);
+        urlView.setOnLongClickListener(v -> {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("NovelReader GitHub", projectUrl));
+                Toast.makeText(this, "已复制项目地址", Toast.LENGTH_SHORT).show();
+            }
+            return true;
+        });
+        content.addView(urlView);
+
+        TextView license = createDialogMessage("许可说明：\n"
+                + "当前项目暂未指定正式开源许可证。未经作者明确许可，请勿将本项目代码用于复制、修改、分发或商业用途。\n\n"
+                + "版权声明：\n"
+                + "Copyright (c) 2026 wjnocal\n\n"
+                + "第三方开源组件：\n"
+                + "本应用使用了 AndroidX AppCompat、Activity KTX、CoordinatorLayout、ConstraintLayout、DrawerLayout、RecyclerView、Material Components、Room、jsoup、JUnit、AndroidX Test 和 Espresso 等第三方开源组件。相关组件的版权归其原作者所有，并遵循对应的开源许可证。");
+        license.setLineSpacing(dpToPx(3), 1.05f);
+        content.addView(license);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("知道了", v -> dialog.dismiss()));
+        content.addView(actions);
         dialog.setContentView(content);
         showPlainDialog(dialog);
     }
