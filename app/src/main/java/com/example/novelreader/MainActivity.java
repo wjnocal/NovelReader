@@ -48,6 +48,8 @@ import com.example.novelreader.data.BookmarkEntity;
 import com.example.novelreader.data.FolderMetaEntity;
 import com.example.novelreader.data.ImportRecordEntity;
 import com.example.novelreader.data.NoteEntity;
+import com.example.novelreader.online.OnlineBookClient;
+import com.example.novelreader.online.OnlineBookResult;
 import com.example.novelreader.parser.BookImporter;
 import com.example.novelreader.ui.BooksAdapter;
 import com.example.novelreader.ui.ReaderActivity;
@@ -187,11 +189,13 @@ public class MainActivity extends AppCompatActivity {
         TextView homeGoalButton = findViewById(R.id.homeGoalButton);
         TextView homeHistoryButton = findViewById(R.id.homeHistoryButton);
         TextView homeImportButton = findViewById(R.id.homeImportButton);
+        TextView homeOnlineSearchButton = findViewById(R.id.homeOnlineSearchButton);
         TextView homeBackupButton = findViewById(R.id.homeBackupButton);
         TextView homeRestoreButton = findViewById(R.id.homeRestoreButton);
         moreMenuPanel = findViewById(R.id.moreMenuPanel);
         TextView menuImportButton = findViewById(R.id.menuImportButton);
         TextView menuImportRecordsButton = findViewById(R.id.menuImportRecordsButton);
+        TextView menuOnlineSearchButton = findViewById(R.id.menuOnlineSearchButton);
         TextView menuSortButton = findViewById(R.id.menuSortButton);
         menuListModeButton = findViewById(R.id.menuListModeButton);
         TextView menuCategoryButton = findViewById(R.id.menuCategoryButton);
@@ -266,6 +270,12 @@ public class MainActivity extends AppCompatActivity {
         importButton.setOnClickListener(importClickListener);
         menuImportButton.setOnClickListener(importClickListener);
         homeImportButton.setOnClickListener(importClickListener);
+        View.OnClickListener onlineSearchClickListener = v -> {
+            hideMoreMenu();
+            startActivity(new Intent(this, OnlineSearchActivity.class));
+        };
+        menuOnlineSearchButton.setOnClickListener(onlineSearchClickListener);
+        homeOnlineSearchButton.setOnClickListener(onlineSearchClickListener);
         menuImportRecordsButton.setOnClickListener(v -> showImportRecordsDialog());
         cancelSelectionButton.setOnClickListener(v -> exitSelectionMode());
         groupSelectedButton.setOnClickListener(v -> showGroupSelectedDialog());
@@ -2267,6 +2277,201 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return results;
+    }
+
+    private void showOnlineSearchDialog() {
+        hideMoreMenu();
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("在线搜书"));
+        content.addView(createDialogMessage("从内置书源搜索，下载后会保存到本地书架。"));
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("输入书名、作者或详情页网址");
+        input.setTextColor(0xFF111111);
+        input.setHintTextColor(0xFF777777);
+        content.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("取消", v -> dialog.dismiss()));
+        actions.addView(createDialogOption("用网址下载", v -> {
+            String bookUrl = input.getText().toString().trim();
+            if (bookUrl.isEmpty()) {
+                Toast.makeText(this, "请输入详情页网址", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            dialog.dismiss();
+            startOnlineBookUrlDownload(bookUrl);
+        }));
+        actions.addView(createDialogOption("搜索", v -> {
+            String keyword = input.getText().toString().trim();
+            if (keyword.isEmpty()) {
+                Toast.makeText(this, "请输入书名", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            dialog.dismiss();
+            searchOnlineBooks(keyword);
+        }));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void startOnlineBookUrlDownload(String bookUrl) {
+        Dialog progressDialog = createPlainDialog();
+        progressDialog.setCancelable(false);
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("正在下载"));
+        TextView progressText = createDialogMessage("正在识别书源...");
+        content.addView(progressText);
+        progressDialog.setContentView(content);
+        showPlainDialog(progressDialog);
+
+        executor.execute(() -> {
+            try {
+                long bookId = new OnlineBookClient(this).downloadUrlToLibrary(bookUrl, message ->
+                        runOnUiThread(() -> progressText.setText(message)));
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "下载完成", Toast.LENGTH_SHORT).show();
+                    loadBooks();
+                    showOnlineDownloadFinishedDialog(bookId);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "网址下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void searchOnlineBooks(String keyword) {
+        Toast.makeText(this, "正在在线搜索...", Toast.LENGTH_SHORT).show();
+        executor.execute(() -> {
+            try {
+                List<OnlineBookResult> results = new OnlineBookClient(this).search(keyword);
+                runOnUiThread(() -> showOnlineSearchResultsDialog(keyword, results));
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, "在线搜索失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void showOnlineSearchResultsDialog(String keyword, List<OnlineBookResult> results) {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("在线搜索结果"));
+        LinearLayout resultList = new LinearLayout(this);
+        resultList.setOrientation(LinearLayout.VERTICAL);
+        if (results.isEmpty()) {
+            resultList.addView(createDialogMessage("没有从内置书源找到《" + keyword + "》。"));
+        } else {
+            int count = Math.min(12, results.size());
+            for (int i = 0; i < count; i++) {
+                resultList.addView(createOnlineSearchResultRow(results.get(i), dialog));
+                if (i < count - 1) {
+                    resultList.addView(createDivider());
+                }
+            }
+            if (results.size() > count) {
+                resultList.addView(createDialogMessage("还有 " + (results.size() - count) + " 条结果未显示，请换更精确的关键词。"));
+            }
+        }
+        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
+        scrollView.addView(resultList);
+        content.addView(scrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Math.min(dpToPx(420), getResources().getDisplayMetrics().heightPixels / 2)
+        ));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("关闭", v -> dialog.dismiss()));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private TextView createOnlineSearchResultRow(OnlineBookResult result, Dialog dialog) {
+        StringBuilder text = new StringBuilder();
+        text.append(result.bookName).append('\n');
+        text.append(result.displayAuthor()).append(" · ").append(result.sourceName);
+        String latest = result.displayLatest();
+        if (!latest.isEmpty()) {
+            text.append('\n').append(latest);
+        }
+        TextView row = createDialogOption(text.toString(), v -> {
+            dialog.dismiss();
+            showOnlineDownloadConfirmDialog(result);
+        });
+        row.setMinHeight(dpToPx(72));
+        return row;
+    }
+
+    private void showOnlineDownloadConfirmDialog(OnlineBookResult result) {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("下载到书架"));
+        content.addView(createDialogMessage("《" + result.bookName + "》\n" + result.displayAuthor() + " · " + result.sourceName + "\n" + result.displayLatest()));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("取消", v -> dialog.dismiss()));
+        actions.addView(createDialogOption("下载", v -> {
+            dialog.dismiss();
+            startOnlineBookDownload(result);
+        }));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
+    private void startOnlineBookDownload(OnlineBookResult result) {
+        Dialog progressDialog = createPlainDialog();
+        progressDialog.setCancelable(false);
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("正在下载"));
+        TextView progressText = createDialogMessage("准备下载《" + result.bookName + "》...");
+        content.addView(progressText);
+        progressDialog.setContentView(content);
+        showPlainDialog(progressDialog);
+
+        executor.execute(() -> {
+            try {
+                long bookId = new OnlineBookClient(this).downloadToLibrary(result, message ->
+                        runOnUiThread(() -> progressText.setText(message)));
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "下载完成", Toast.LENGTH_SHORT).show();
+                    loadBooks();
+                    showOnlineDownloadFinishedDialog(bookId);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void showOnlineDownloadFinishedDialog(long bookId) {
+        Dialog dialog = createPlainDialog();
+        LinearLayout content = createDialogContent();
+        content.addView(createDialogTitle("已加入书架"));
+        content.addView(createDialogMessage("在线下载的章节已经保存到本地，可以离线阅读。"));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("留在书架", v -> dialog.dismiss()));
+        actions.addView(createDialogOption("打开阅读", v -> {
+            dialog.dismiss();
+            startActivity(ReaderActivity.createIntent(MainActivity.this, bookId));
+        }));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
     }
 
     private void updateReadingTimeText() {
