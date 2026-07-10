@@ -16,6 +16,12 @@ public interface NoteDao {
     @Query("SELECT COUNT(*) FROM notes WHERE bookId = :bookId")
     int countForBook(long bookId);
 
+    @Query("SELECT * FROM notes")
+    List<NoteEntity> getAll();
+
+    @Query("SELECT * FROM notes WHERE syncId = :syncId LIMIT 1")
+    NoteEntity getBySyncId(String syncId);
+
     @Insert
     long insert(NoteEntity note);
 

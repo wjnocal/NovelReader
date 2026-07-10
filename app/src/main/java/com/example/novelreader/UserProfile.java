@@ -13,6 +13,9 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.widget.TextView;
 
+import com.example.novelreader.sync.SyncPreferences;
+import com.example.novelreader.sync.SyncRepository;
+
 import androidx.core.graphics.drawable.RoundedBitmapDrawable;
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
 
@@ -41,6 +44,14 @@ public final class UserProfile {
                 .edit()
                 .putString(KEY_NAME, normalized)
                 .apply();
+        SyncPreferences.markNameChanged(context);
+        SyncRepository.requestAutomatic(context);
+    }
+
+    public static void saveNameFromSync(Context context, String name, long updatedAt) {
+        String normalized = TextUtils.isEmpty(name) ? DEFAULT_NAME : name.trim();
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_NAME, normalized).apply();
+        context.getSharedPreferences("webdav_sync", Context.MODE_PRIVATE).edit().putLong("nameUpdatedAt", updatedAt).apply();
     }
 
     public static String avatarUri(Context context) {
@@ -53,6 +64,14 @@ public final class UserProfile {
                 .edit()
                 .putString(KEY_AVATAR_URI, uri == null ? "" : uri.toString())
                 .apply();
+        SyncPreferences.markAvatarChanged(context);
+        SyncRepository.requestAutomatic(context);
+    }
+
+    public static void saveAvatarFromSync(Context context, Uri uri, long updatedAt) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(KEY_AVATAR_URI, uri == null ? "" : uri.toString()).apply();
+        context.getSharedPreferences("webdav_sync", Context.MODE_PRIVATE).edit().putLong("avatarUpdatedAt", updatedAt).apply();
     }
 
     public static void clearAvatar(Context context) {
@@ -61,6 +80,14 @@ public final class UserProfile {
                 .remove(KEY_AVATAR_URI)
                 .apply();
         deleteFiles(new File(context.getFilesDir(), "avatars"));
+        SyncPreferences.markAvatarChanged(context);
+        SyncRepository.requestAutomatic(context);
+    }
+
+    public static void clearAvatarFromSync(Context context, long updatedAt) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove(KEY_AVATAR_URI).apply();
+        deleteFiles(new File(context.getFilesDir(), "avatars"));
+        context.getSharedPreferences("webdav_sync", Context.MODE_PRIVATE).edit().putLong("avatarUpdatedAt", updatedAt).apply();
     }
 
     public static boolean followSystemTheme(Context context) {

@@ -72,7 +72,8 @@
       "content": "#content",
       "paragraphTagClosed": true,
       "filterTxt": "本小章还未完，请点击下一页继续阅读后面精彩内容！|小主，这个章节后面还有哦，请点击下一页继续阅读，后面更精彩！|这章没有结束，请点击下一页继续阅读！|喜欢(.+?)请大家收藏：\\(([^)]+)\\)\\1书海阁小说网更新速度全网最快。|\\(本章完\\)",
-      "filterTag": ".bottem2, hr, script, table"
+      "filterTag": ".bottem2, hr, script, table",
+      "nextPage": "#pager_next"
     },
     "crawl": {
       "timeoutMillis": 15000,
@@ -187,7 +188,8 @@
       "content": "#content",
       "paragraphTagClosed": true,
       "filterTxt": "\\(本章完\\)",
-      "filterTag": "script"
+      "filterTag": "script",
+      "nextPage": "#next_url"
     },
     "crawl": {
       "timeoutMillis": 15000,
@@ -480,7 +482,8 @@
       "content": "#booktxt",
       "paragraphTagClosed": true,
       "filterTxt": "首发网址.+。|\\(本章完\\)|一秒记住【新天禧小说\\s*】手机用户输入地址：www\\s*\\.xtxxs\\s*\\.com|支持（新天禧小说\\s*）把本站分享那些需要的小伙伴！找不到书请留言！|搜.+免费看精品文学",
-      "filterTag": "script"
+      "filterTag": "script",
+      "nextPage": "#pb_next"
     },
     "crawl": {
       "timeoutMillis": 18000,
@@ -517,7 +520,9 @@
       "content": ".content",
       "paragraphTagClosed": true,
       "filterTxt": "【[^】]+】小说免费阅读，请收藏[^【】]*【[^】]+】|本章未完，点击\\[下一页]继续阅读--|\\(本章完\\)",
-      "filterTag": "script"
+      "filterTag": "script",
+      "nextPage": "#next",
+      "nextChapterLink": "https://www\\.0xs\\.net/txt(?:_1)?/\\d+/\\d+\\.html"
     },
     "crawl": {
       "timeoutMillis": 18000,
@@ -595,7 +600,8 @@
       "content": ".con",
       "paragraphTagClosed": true,
       "filterTxt": "\\(本章完\\)",
-      "filterTag": "script"
+      "filterTag": "script",
+      "nextPage": ".prenext > span:nth-child(3) > a"
     },
     "crawl": {
       "timeoutMillis": 18000,
@@ -917,7 +923,9 @@
       "content": "#content",
       "paragraphTagClosed": true,
       "filterTxt": "\\((继续下一页|本章完)\\)",
-      "filterTag": "script"
+      "filterTag": "script",
+      "nextPage": "#pb_next",
+      "nextPageInJs": "body > script:nth-child(17)@js:r=r.match(/nextpage = \\\"(.*?)\\\"/)[1]"
     },
     "crawl": {
       "timeoutMillis": 18000,

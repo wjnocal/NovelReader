@@ -119,6 +119,9 @@ public class OnlineSourceRepository {
             source.chapter.paragraphTagClosed = chapter.optBoolean("paragraphTagClosed", false);
             source.chapter.filterTxt = chapter.optString("filterTxt");
             source.chapter.filterTag = chapter.optString("filterTag");
+            source.chapter.nextPage = chapter.optString("nextPage");
+            source.chapter.nextPageInJs = chapter.optString("nextPageInJs");
+            source.chapter.nextChapterLink = chapter.optString("nextChapterLink");
         }
 
         JSONObject crawl = object.optJSONObject("crawl");

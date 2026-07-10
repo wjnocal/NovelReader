@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public class BookImporter {
     private final Context context;
@@ -79,6 +80,8 @@ public class BookImporter {
         book.scrollY = 0;
         book.createdAt = now;
         book.updatedAt = now;
+        book.syncId = UUID.randomUUID().toString();
+        book.syncUpdatedAt = now;
 
         long bookId = -1;
         try {
@@ -186,6 +189,8 @@ public class BookImporter {
             existing.currentPageStartOffset = 0;
             existing.scrollY = 0;
             existing.updatedAt = System.currentTimeMillis();
+            existing.syncContentHash = "";
+            existing.syncUpdatedAt = existing.updatedAt;
             database.bookDao().update(existing);
             if (oldBookDir != null && oldBookDir.exists()) {
                 deleteRecursively(oldBookDir);

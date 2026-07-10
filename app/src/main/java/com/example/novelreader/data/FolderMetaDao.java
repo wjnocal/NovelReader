@@ -15,6 +15,9 @@ public interface FolderMetaDao {
     @Query("SELECT * FROM folder_meta WHERE name = :name LIMIT 1")
     FolderMetaEntity getByName(String name);
 
+    @Query("SELECT * FROM folder_meta WHERE syncId = :syncId LIMIT 1")
+    FolderMetaEntity getBySyncId(String syncId);
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void save(FolderMetaEntity folder);
 

@@ -19,8 +19,17 @@ public interface BookmarkDao {
     @Query("SELECT COUNT(*) FROM bookmarks WHERE bookId = :bookId")
     int countForBook(long bookId);
 
+    @Query("SELECT * FROM bookmarks")
+    List<BookmarkEntity> getAll();
+
+    @Query("SELECT * FROM bookmarks WHERE syncId = :syncId LIMIT 1")
+    BookmarkEntity getBySyncId(String syncId);
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     long insert(BookmarkEntity bookmark);
+
+    @androidx.room.Update
+    void update(BookmarkEntity bookmark);
 
     @Delete
     void delete(BookmarkEntity bookmark);

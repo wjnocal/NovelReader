@@ -55,6 +55,9 @@ public class OnlineBookSource {
         public boolean paragraphTagClosed;
         public String filterTxt;
         public String filterTag;
+        public String nextPage;
+        public String nextPageInJs;
+        public String nextChapterLink;
     }
 
     public static class CrawlRule {

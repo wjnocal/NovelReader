@@ -16,6 +16,9 @@ public interface BookDao {
     @Query("SELECT * FROM books WHERE id = :bookId LIMIT 1")
     BookEntity getById(long bookId);
 
+    @Query("SELECT * FROM books WHERE syncId = :syncId LIMIT 1")
+    BookEntity getBySyncId(String syncId);
+
     @Query("SELECT * FROM books WHERE title = :title LIMIT 1")
     BookEntity getByTitle(String title);
 
@@ -25,10 +28,10 @@ public interface BookDao {
     @Query("SELECT COUNT(*) FROM books WHERE finishedAt = 0")
     int countReading();
 
-    @Query("UPDATE books SET category = :newCategory, updatedAt = :updatedAt WHERE category = :oldCategory")
+    @Query("UPDATE books SET category = :newCategory, updatedAt = :updatedAt, syncUpdatedAt = :updatedAt WHERE category = :oldCategory")
     void renameCategory(String oldCategory, String newCategory, long updatedAt);
 
-    @Query("UPDATE books SET category = '未分类', updatedAt = :updatedAt WHERE category = :category")
+    @Query("UPDATE books SET category = '未分类', updatedAt = :updatedAt, syncUpdatedAt = :updatedAt WHERE category = :category")
     void clearCategory(String category, long updatedAt);
 
     @Query("UPDATE books SET currentChapterIndex = 0, scrollY = 0, currentPageIndex = 0, currentPageStartOffset = 0")

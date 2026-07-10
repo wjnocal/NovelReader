@@ -2,6 +2,7 @@ package com.example.novelreader.data;
 
 import androidx.room.Entity;
 import androidx.room.PrimaryKey;
+import androidx.annotation.NonNull;
 
 @Entity(tableName = "books")
 public class BookEntity {
@@ -25,4 +26,9 @@ public class BookEntity {
     public long finishedAt;
     public long createdAt;
     public long updatedAt;
+    @NonNull
+    public String syncId = "";
+    @NonNull
+    public String syncContentHash = "";
+    public long syncUpdatedAt;
 }

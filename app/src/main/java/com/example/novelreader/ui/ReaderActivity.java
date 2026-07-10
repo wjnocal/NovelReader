@@ -62,6 +62,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.novelreader.R;
+import com.example.novelreader.OnboardingManager;
 import com.example.novelreader.UserProfile;
 import com.example.novelreader.data.AppDatabase;
 import com.example.novelreader.data.BookEntity;
@@ -70,6 +71,8 @@ import com.example.novelreader.data.ChapterEntity;
 import com.example.novelreader.data.DailyReadingEntity;
 import com.example.novelreader.data.NoteEntity;
 import com.example.novelreader.data.ReaderSettingsEntity;
+import com.example.novelreader.sync.SyncRepository;
+import com.example.novelreader.sync.SyncPreferences;
 import com.example.novelreader.parser.ParsedBook;
 import com.example.novelreader.parser.ParsedChapter;
 import com.example.novelreader.parser.TxtParser;
@@ -87,6 +90,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -269,6 +273,7 @@ public class ReaderActivity extends AppCompatActivity {
         readingSessionStartMillis = System.currentTimeMillis();
         hideSystemBars();
         updateReaderStatus();
+        SyncRepository.requestAutomatic(this);
         statusHandler.postDelayed(statusRunnable, 60000);
     }
 
@@ -636,8 +641,21 @@ public class ReaderActivity extends AppCompatActivity {
                 refreshDrawerLists();
                 int chapterIndex = Math.max(0, Math.min(book.currentChapterIndex, chapters.size() - 1));
                 openChapter(chapterIndex, book.scrollY, book.currentPageStartOffset);
+                contentView.postDelayed(this::maybeShowReaderGuide, 500L);
             });
         });
+    }
+
+    private void maybeShowReaderGuide() {
+        if (book == null || !OnboardingManager.shouldShowReaderGuide(this) || isFinishing()) {
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("阅读操作")
+                .setMessage("轻触屏幕呼出阅读菜单。\n\n翻页与滚动可在阅读设置中切换。\n\n长按文字可以添加笔记；目录、书签和笔记都在阅读菜单中。")
+                .setNegativeButton("跳过", (dialog, which) -> OnboardingManager.completeReaderGuide(this))
+                .setPositiveButton("开始阅读", (dialog, which) -> OnboardingManager.completeReaderGuide(this))
+                .show();
     }
 
     private void openChapter(int index, int targetScrollY, int targetPageStartOffset) {
@@ -717,9 +735,10 @@ public class ReaderActivity extends AppCompatActivity {
         scrollView.scrollTo(0, 0);
         contentView.post(() -> {
             int availableWidth = contentView.getWidth() - contentView.getPaddingStart() - contentView.getPaddingEnd();
-            int availableHeight = scrollView.getHeight() - contentView.getPaddingTop() - contentView.getPaddingBottom();
+            int availableHeight = getPagedContentHeight();
+            CharSequence measuredText = formatTextForPagination();
             currentPages = TextPaginator.paginate(
-                    currentDisplayText,
+                    measuredText,
                     contentView.getPaint(),
                     availableWidth,
                     availableHeight,
@@ -731,6 +750,49 @@ public class ReaderActivity extends AppCompatActivity {
                     : TextPaginator.findPageByOffset(currentPages, targetPageStartOffset);
             renderPage(pageIndex, direction);
         });
+    }
+
+    private CharSequence formatTextForPagination() {
+        if (TextUtils.isEmpty(currentDisplayText)) {
+            return "";
+        }
+        SpannableStringBuilder styled = new SpannableStringBuilder(currentDisplayText);
+        applyTitleStyle(styled, 0);
+        applyFirstLineIndent(styled, currentDisplayText, 0);
+        return styled;
+    }
+
+    private int getPagedContentHeight() {
+        int height = scrollView.getHeight() - contentView.getPaddingTop() - contentView.getPaddingBottom();
+        height -= getPagedBottomSafetyInset();
+        return Math.max(dp(80), height);
+    }
+
+    private int getPagedBottomSafetyInset() {
+        int statusReserve = Math.max(bottomReserveFor(timeView), bottomReserveFor(batteryView)) + dp(6);
+        int extraForStatus = Math.max(0, statusReserve - contentView.getPaddingBottom());
+        int lineGuard = Math.max(dp(6), Math.round(contentView.getPaint().getFontSpacing() * 0.35f));
+        return extraForStatus + lineGuard;
+    }
+
+    private int bottomReserveFor(View view) {
+        if (view == null || view.getVisibility() == View.GONE) {
+            return 0;
+        }
+        int height = view.getHeight();
+        if (height <= 0) {
+            view.measure(
+                    View.MeasureSpec.makeMeasureSpec(root == null ? 0 : root.getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.UNSPECIFIED
+            );
+            height = view.getMeasuredHeight();
+        }
+        int bottomMargin = 0;
+        ViewGroup.LayoutParams params = view.getLayoutParams();
+        if (params instanceof ViewGroup.MarginLayoutParams) {
+            bottomMargin = ((ViewGroup.MarginLayoutParams) params).bottomMargin;
+        }
+        return height + bottomMargin;
     }
 
     private void renderPage(int pageIndex, int direction) {
@@ -768,22 +830,27 @@ public class ReaderActivity extends AppCompatActivity {
         int safeEnd = Math.max(safeStart, Math.min(end, currentDisplayText.length()));
         String pageText = currentDisplayText.substring(safeStart, safeEnd);
         SpannableStringBuilder styled = new SpannableStringBuilder(pageText);
-        if (safeStart == 0 && currentTitleLength > 0) {
-            int titleEnd = Math.min(currentTitleLength, pageText.length());
-            styled.setSpan(
-                    new AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
-                    0,
-                    titleEnd,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            );
-            styled.setSpan(new StyleSpan(android.graphics.Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            styled.setSpan(new RelativeSizeSpan(1.15f), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        }
+        applyTitleStyle(styled, safeStart);
         applyFirstLineIndent(styled, pageText, safeStart);
         applyNoteUnderlines(styled, safeStart, safeEnd);
         applyActiveSelectionHighlight(styled, safeStart, safeEnd);
         appendCommentBubbles(styled, safeStart, safeEnd);
         return styled;
+    }
+
+    private void applyTitleStyle(SpannableStringBuilder styled, int sliceStart) {
+        if (styled == null || sliceStart != 0 || currentTitleLength <= 0) {
+            return;
+        }
+        int titleEnd = Math.min(currentTitleLength, styled.length());
+        styled.setSpan(
+                new AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                0,
+                titleEnd,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        );
+        styled.setSpan(new StyleSpan(android.graphics.Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        styled.setSpan(new RelativeSizeSpan(1.15f), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
 
     private void applyActiveSelectionHighlight(SpannableStringBuilder styled, int sliceStart, int sliceEnd) {
@@ -1247,8 +1314,10 @@ public class ReaderActivity extends AppCompatActivity {
         }
         executor.execute(() -> {
             for (NoteEntity mark : marks) {
+                SyncRepository.recordDeletion(this, "note", mark.syncId, System.currentTimeMillis());
                 database.noteDao().delete(mark);
             }
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "\u5df2\u5220\u9664\u6807\u8bb0", Toast.LENGTH_SHORT).show();
                 clearTextSelection();
@@ -1414,9 +1483,12 @@ public class ReaderActivity extends AppCompatActivity {
         note.noteText = noteText;
         note.color = 0;
         note.createdAt = System.currentTimeMillis();
+        note.updatedAt = note.createdAt;
+        note.syncId = UUID.randomUUID().toString();
         executor.execute(() -> {
             long id = database.noteDao().insert(note);
             note.id = id;
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "\u5df2\u53d1\u5e03\u8bc4\u8bba", Toast.LENGTH_SHORT).show();
                 if (callback != null) {
@@ -2109,8 +2181,12 @@ public class ReaderActivity extends AppCompatActivity {
             book.scrollY = scrollView == null ? book.scrollY : scrollView.getScrollY();
         }
         book.updatedAt = System.currentTimeMillis();
+        book.syncUpdatedAt = book.updatedAt;
         BookEntity snapshot = book;
-        executor.execute(() -> database.bookDao().update(snapshot));
+        executor.execute(() -> {
+            database.bookDao().update(snapshot);
+            SyncRepository.requestAutomatic(this);
+        });
     }
 
     private void saveReadingSessionTime() {
@@ -2136,6 +2212,7 @@ public class ReaderActivity extends AppCompatActivity {
             }
             entity.readingMillis += elapsed;
             database.dailyReadingDao().save(entity);
+            SyncRepository.recordReadingEvent(this, today, elapsed);
         });
     }
 
@@ -2623,8 +2700,11 @@ public class ReaderActivity extends AppCompatActivity {
         note.noteText = noteText;
         note.color = color;
         note.createdAt = System.currentTimeMillis();
+        note.updatedAt = note.createdAt;
+        note.syncId = UUID.randomUUID().toString();
         executor.execute(() -> {
             database.noteDao().insert(note);
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, TextUtils.isEmpty(noteText) ? "\u5df2\u6dfb\u52a0\u6807\u8bb0" : "\u5df2\u53d1\u5e03\u8bc4\u8bba", Toast.LENGTH_SHORT).show();
                 loadNotes();
@@ -2639,8 +2719,10 @@ public class ReaderActivity extends AppCompatActivity {
     private void updateNote(NoteEntity note, String noteText, int color, Runnable onDone) {
         note.noteText = noteText;
         note.color = color;
+        note.updatedAt = System.currentTimeMillis();
         executor.execute(() -> {
             database.noteDao().update(note);
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "已更新笔记", Toast.LENGTH_SHORT).show();
                 loadNotes();
@@ -2653,6 +2735,7 @@ public class ReaderActivity extends AppCompatActivity {
 
     private void deleteNote(NoteEntity note) {
         executor.execute(() -> {
+            SyncRepository.recordDeletion(this, "note", note.syncId, System.currentTimeMillis());
             database.noteDao().delete(note);
             runOnUiThread(() -> {
                 Toast.makeText(this, "已删除笔记", Toast.LENGTH_SHORT).show();
@@ -2738,9 +2821,13 @@ public class ReaderActivity extends AppCompatActivity {
                 bookmark.chapterTitle = currentChapterTitle;
                 bookmark.summary = buildBookmarkSummary(pageStart);
                 bookmark.createdAt = System.currentTimeMillis();
+                bookmark.updatedAt = bookmark.createdAt;
+                bookmark.syncId = UUID.randomUUID().toString();
                 database.bookmarkDao().insert(bookmark);
+                SyncRepository.requestAutomatic(this);
                 runOnUiThread(() -> Toast.makeText(this, "已添加书签", Toast.LENGTH_SHORT).show());
             } else {
+                SyncRepository.recordDeletion(this, "bookmark", existing.syncId, System.currentTimeMillis());
                 database.bookmarkDao().delete(existing);
                 runOnUiThread(() -> Toast.makeText(this, "已取消书签", Toast.LENGTH_SHORT).show());
             }
@@ -3025,6 +3112,9 @@ public class ReaderActivity extends AppCompatActivity {
                 }
 
                 database.bookmarkDao().deleteForBook(bookId);
+                for (BookmarkEntity bookmark : bookmarks) {
+                    SyncRepository.recordDeletion(this, "bookmark", bookmark.syncId, System.currentTimeMillis());
+                }
                 database.chapterDao().deleteForBook(bookId);
                 database.chapterDao().insertAll(newChapters);
                 for (File oldChapterDir : oldChapterDirs) {
@@ -3038,7 +3128,10 @@ public class ReaderActivity extends AppCompatActivity {
                 book.currentPageIndex = 0;
                 book.currentPageStartOffset = 0;
                 book.updatedAt = System.currentTimeMillis();
+                book.syncUpdatedAt = book.updatedAt;
+                book.syncContentHash = "";
                 database.bookDao().update(book);
+                SyncRepository.requestAutomatic(this);
 
                 chapters = database.chapterDao().getForBook(bookId);
                 bookmarks = new ArrayList<>();
@@ -3155,10 +3248,12 @@ public class ReaderActivity extends AppCompatActivity {
         int topPadding = dp(Math.max(12, settings.pageMarginDp)) + cameraSafeTopOffset;
         int bottomPadding = dp(Math.max(48, settings.pageMarginDp + 26));
         contentView.setTypeface(typeface);
+        contentView.setIncludeFontPadding(false);
         contentView.setTextSize(settings.textSizeSp);
         contentView.setLineSpacing(dp(Math.round(settings.paragraphSpacingDp)), settings.lineSpacingMultiplier);
         contentView.setPadding(horizontalPadding, topPadding, horizontalPadding, bottomPadding);
         pageTransitionView.setTypeface(typeface);
+        pageTransitionView.setIncludeFontPadding(false);
         pageTransitionView.setTextSize(settings.textSizeSp);
         pageTransitionView.setLineSpacing(dp(Math.round(settings.paragraphSpacingDp)), settings.lineSpacingMultiplier);
         pageTransitionView.setPadding(horizontalPadding, topPadding, horizontalPadding, bottomPadding);
@@ -3179,7 +3274,11 @@ public class ReaderActivity extends AppCompatActivity {
             return;
         }
         ReaderSettingsEntity snapshot = settings;
-        executor.execute(() -> database.readerSettingsDao().save(snapshot));
+        executor.execute(() -> {
+            database.readerSettingsDao().save(snapshot);
+            SyncPreferences.markSettingsChanged(this);
+            SyncRepository.requestAutomatic(this);
+        });
     }
 
     private boolean isPagedMode() {
@@ -3421,8 +3520,10 @@ public class ReaderActivity extends AppCompatActivity {
         }
         executor.execute(() -> {
             for (NoteEntity item : deleting) {
+                SyncRepository.recordDeletion(this, "note", item.syncId, System.currentTimeMillis());
                 database.noteDao().delete(item);
             }
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "\u5df2\u5220\u9664\u8bc4\u8bba", Toast.LENGTH_SHORT).show();
                 adapter.removeCommentTree(comment);

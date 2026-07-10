@@ -11,4 +11,6 @@ public class FolderMetaEntity {
     public String name = "";
     public long pinnedAt;
     public long updatedAt;
+    @NonNull
+    public String syncId = "";
 }

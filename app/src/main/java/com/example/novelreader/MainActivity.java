@@ -51,6 +51,8 @@ import com.example.novelreader.data.NoteEntity;
 import com.example.novelreader.online.OnlineBookClient;
 import com.example.novelreader.online.OnlineBookResult;
 import com.example.novelreader.parser.BookImporter;
+import com.example.novelreader.sync.SyncRepository;
+import com.example.novelreader.sync.SyncPreferences;
 import com.example.novelreader.ui.BooksAdapter;
 import com.example.novelreader.ui.ReaderActivity;
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
@@ -110,6 +112,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView homeFinishedCountText;
     private TextView homeTitleText;
     private TextView homeAvatarButton;
+    private View onboardingChecklist;
+    private TextView onboardingChecklistItems;
     private TextView bookshelfTabButton;
     private TextView homeTabButton;
     private TextView emptyView;
@@ -190,6 +194,9 @@ public class MainActivity extends AppCompatActivity {
         TextView homeHistoryButton = findViewById(R.id.homeHistoryButton);
         TextView homeImportButton = findViewById(R.id.homeImportButton);
         TextView homeOnlineSearchButton = findViewById(R.id.homeOnlineSearchButton);
+        onboardingChecklist = findViewById(R.id.onboardingChecklist);
+        onboardingChecklistItems = findViewById(R.id.onboardingChecklistItems);
+        TextView onboardingChecklistDismiss = findViewById(R.id.onboardingChecklistDismiss);
         TextView homeBackupButton = findViewById(R.id.homeBackupButton);
         TextView homeRestoreButton = findViewById(R.id.homeRestoreButton);
         moreMenuPanel = findViewById(R.id.moreMenuPanel);
@@ -272,6 +279,8 @@ public class MainActivity extends AppCompatActivity {
         homeImportButton.setOnClickListener(importClickListener);
         View.OnClickListener onlineSearchClickListener = v -> {
             hideMoreMenu();
+            OnboardingManager.markOnlineSearchVisited(this);
+            updateOnboardingChecklist();
             startActivity(new Intent(this, OnlineSearchActivity.class));
         };
         menuOnlineSearchButton.setOnClickListener(onlineSearchClickListener);
@@ -295,6 +304,10 @@ public class MainActivity extends AppCompatActivity {
         homeGoalButton.setOnClickListener(v -> showReadingGoalDialog());
         homeHistoryButton.setOnClickListener(v -> showHistoryDialog());
         homeAvatarButton.setOnClickListener(v -> showUserProfilePanel());
+        onboardingChecklistDismiss.setOnClickListener(v -> {
+            OnboardingManager.dismissChecklist(this);
+            updateOnboardingChecklist();
+        });
         bookshelfTabButton.setOnClickListener(v -> switchMainTab(TAB_BOOKSHELF));
         homeTabButton.setOnClickListener(v -> switchMainTab(TAB_HOME));
         menuBackgroundButton.setOnClickListener(v -> showBookshelfBackgroundDialog());
@@ -313,6 +326,8 @@ public class MainActivity extends AppCompatActivity {
         updateHomeAvatar();
         updateGroupHeader();
         switchMainTab(TAB_BOOKSHELF);
+        updateOnboardingChecklist();
+        uiHandler.postDelayed(this::maybeShowWelcomeGuide, 450L);
     }
 
     @Override
@@ -323,6 +338,7 @@ public class MainActivity extends AppCompatActivity {
         updateHomeUserName();
         updateHomeAvatar();
         loadBooks();
+        SyncRepository.requestAutomatic(this);
     }
 
     @Override
@@ -616,6 +632,7 @@ public class MainActivity extends AppCompatActivity {
                 submitSortedBooks();
                 updateGroupHeader();
                 updateHomePageStats();
+                updateOnboardingChecklist();
                 if (adapter.isSelectionMode()) {
                     updateSelectionUi();
                 }
@@ -684,6 +701,68 @@ public class MainActivity extends AppCompatActivity {
         homeFinishedCountText.setText(finishedCount + "本");
     }
 
+    private void updateOnboardingChecklist() {
+        if (onboardingChecklist == null || onboardingChecklistItems == null) {
+            return;
+        }
+        boolean hasBook = !currentBooks.isEmpty();
+        boolean visitedSearch = OnboardingManager.hasVisitedOnlineSearch(this);
+        boolean openedReader = !OnboardingManager.shouldShowReaderGuide(this);
+        boolean enabledSync = SyncPreferences.isEnabled(this);
+        int completed = (hasBook ? 1 : 0) + (visitedSearch ? 1 : 0)
+                + (openedReader ? 1 : 0) + (enabledSync ? 1 : 0);
+        onboardingChecklistItems.setText((hasBook ? "✓" : "○") + " 添加第一本书\n"
+                + (visitedSearch ? "✓" : "○") + " 使用在线搜书\n"
+                + (openedReader ? "✓" : "○") + " 了解阅读操作\n"
+                + (enabledSync ? "✓" : "○") + " 配置 WebDAV 同步");
+        boolean hidden = OnboardingManager.isChecklistDismissed(this) || completed == 4;
+        onboardingChecklist.setVisibility(hidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void maybeShowWelcomeGuide() {
+        if (OnboardingManager.shouldShowWelcome(this) && !isFinishing()) {
+            showWelcomeGuide(0);
+        }
+    }
+
+    private void showWelcomeGuide(int page) {
+        String[] titles = {"把书带进书架", "在线搜书", "让阅读跟着你"};
+        String[] messages = {
+                "从主页的“导入书籍”选择 TXT 或 EPUB。导入后会自动整理到书架，离线也能阅读。",
+                "在主页点击“在线搜书”，选择需要的书源和下载格式。搜索结果会合并同名书籍，方便挑选版本。",
+                "点击主页头像，选择“登入账号”配置自己的 WebDAV。书架、进度、书签和笔记可以在设备间同步。"
+        };
+        if (page >= titles.length) {
+            OnboardingManager.completeWelcome(this);
+            switchMainTab(TAB_HOME);
+            updateOnboardingChecklist();
+            return;
+        }
+        Dialog dialog = createPlainDialog();
+        dialog.setCancelable(false);
+        LinearLayout content = createDialogContent();
+        TextView indicator = createDialogMessage((page + 1) + " / " + titles.length);
+        indicator.setTextColor(0xFFB95A52);
+        content.addView(indicator);
+        content.addView(createDialogTitle(titles[page]));
+        content.addView(createDialogMessage(messages[page]));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(createDialogOption("跳过", v -> {
+            OnboardingManager.completeWelcome(this);
+            dialog.dismiss();
+            switchMainTab(TAB_HOME);
+            updateOnboardingChecklist();
+        }));
+        actions.addView(createDialogOption(page == titles.length - 1 ? "开始使用" : "下一步", v -> {
+            dialog.dismiss();
+            showWelcomeGuide(page + 1);
+        }));
+        content.addView(actions);
+        dialog.setContentView(content);
+        showPlainDialog(dialog);
+    }
+
     private void updateHomeAvatar() {
         if (homeAvatarButton != null) {
             UserProfile.applyAvatar(homeAvatarButton, this, dpToPx(58));
@@ -734,8 +813,10 @@ public class MainActivity extends AppCompatActivity {
             dialog.dismiss();
             showAboutSoftwareDialog();
         }));
-        menu.addView(createProfileOption("切换账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
-        menu.addView(createProfileOption("退出账号", v -> Toast.makeText(this, "开发中，敬请期待", Toast.LENGTH_SHORT).show()));
+        menu.addView(createProfileOption("登入账号", v -> {
+            dialog.dismiss();
+            startActivity(new Intent(this, SyncActivity.class));
+        }));
         menu.addView(createProfileOption("开源说明", v -> {
             dialog.dismiss();
             showOpenSourceNoticeDialog();
@@ -834,6 +915,12 @@ public class MainActivity extends AppCompatActivity {
             UserProfile.setFollowSystemTheme(this, enabled);
             dialog.dismiss();
             Toast.makeText(this, enabled ? "已开启跟随系统" : "已关闭跟随系统", Toast.LENGTH_SHORT).show();
+        }));
+        content.addView(createDialogOption("重新查看新手教程", v -> {
+            OnboardingManager.reset(this);
+            dialog.dismiss();
+            updateOnboardingChecklist();
+            uiHandler.postDelayed(() -> showWelcomeGuide(0), 180L);
         }));
         content.addView(createDialogOption("清除缓存", v -> {
             dialog.dismiss();
@@ -1306,6 +1393,10 @@ public class MainActivity extends AppCompatActivity {
             hideBookActionMenu();
             showRenameBookDialog(book);
         }));
+        menu.addView(createBookActionOption("删除", v -> {
+            hideBookActionMenu();
+            confirmDeleteBook(book);
+        }));
         menu.addView(createBookActionOption(book.pinnedAt > 0 ? "取消置顶" : "置顶", v -> {
             hideBookActionMenu();
             togglePinBook(book);
@@ -1501,6 +1592,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         book.title = newTitle;
+        markBookForSync(book);
         executor.execute(() -> {
             database.bookDao().update(book);
             runOnUiThread(() -> {
@@ -1559,9 +1651,13 @@ public class MainActivity extends AppCompatActivity {
             savedMeta.name = normalizedNew;
             savedMeta.pinnedAt = Math.max(newMeta == null ? 0L : newMeta.pinnedAt, oldMeta == null ? 0L : oldMeta.pinnedAt);
             savedMeta.updatedAt = now;
+            if (savedMeta.syncId == null || savedMeta.syncId.trim().isEmpty()) {
+                savedMeta.syncId = oldMeta == null ? java.util.UUID.randomUUID().toString() : oldMeta.syncId;
+            }
             database.bookDao().renameCategory(normalizedOld, normalizedNew, now);
             database.folderMetaDao().save(savedMeta);
             database.folderMetaDao().deleteByName(normalizedOld);
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "已改名", Toast.LENGTH_SHORT).show();
                 if (normalizedOld.equals(categoryFilter)) {
@@ -1576,6 +1672,7 @@ public class MainActivity extends AppCompatActivity {
     private void togglePinBook(BookEntity book) {
         boolean pinned = book.pinnedAt > 0;
         book.pinnedAt = pinned ? 0L : System.currentTimeMillis();
+        markBookForSync(book);
         executor.execute(() -> {
             database.bookDao().update(book);
             runOnUiThread(() -> {
@@ -1597,6 +1694,7 @@ public class MainActivity extends AppCompatActivity {
             meta.pinnedAt = pinned ? 0L : System.currentTimeMillis();
             meta.updatedAt = System.currentTimeMillis();
             database.folderMetaDao().save(meta);
+            SyncRepository.requestAutomatic(this);
             boolean nowPinned = !pinned;
             runOnUiThread(() -> {
                 Toast.makeText(this, nowPinned ? "已置顶" : "已取消置顶", Toast.LENGTH_SHORT).show();
@@ -1610,7 +1708,12 @@ public class MainActivity extends AppCompatActivity {
         long now = System.currentTimeMillis();
         executor.execute(() -> {
             database.bookDao().clearCategory(normalized, now);
+            FolderMetaEntity deleted = database.folderMetaDao().getByName(normalized);
+            if (deleted != null) {
+                SyncRepository.recordDeletion(this, "folder", deleted.syncId, now);
+            }
             database.folderMetaDao().deleteByName(normalized);
+            SyncRepository.requestAutomatic(this);
             runOnUiThread(() -> {
                 Toast.makeText(this, "已解散分类", Toast.LENGTH_SHORT).show();
                 if (normalized.equals(categoryFilter)) {
@@ -1625,6 +1728,7 @@ public class MainActivity extends AppCompatActivity {
     private void toggleFinished(BookEntity book) {
         boolean finished = book.finishedAt > 0;
         book.finishedAt = finished ? 0L : System.currentTimeMillis();
+        markBookForSync(book);
         executor.execute(() -> {
             database.bookDao().update(book);
             runOnUiThread(() -> {
@@ -1780,6 +1884,7 @@ public class MainActivity extends AppCompatActivity {
         book.category = normalizeCategory(folderName);
         long now = System.currentTimeMillis();
         book.updatedAt = now;
+        book.syncUpdatedAt = now;
         executor.execute(() -> {
             database.bookDao().update(book);
             saveFolderMetaIfNeeded(folderName, now);
@@ -2708,6 +2813,20 @@ public class MainActivity extends AppCompatActivity {
             exitSelectionMode();
             return;
         }
+        confirmDeleteBooks(selectedBooks, "确定删除选中的 " + selectedBooks.size() + " 本书和本地缓存吗？");
+    }
+
+    private void confirmDeleteBook(BookEntity book) {
+        if (book == null) {
+            return;
+        }
+        confirmDeleteBooks(Collections.singletonList(book), "确定删除《" + book.title + "》和本地缓存吗？");
+    }
+
+    private void confirmDeleteBooks(List<BookEntity> books, String messageText) {
+        if (books == null || books.isEmpty()) {
+            return;
+        }
         Dialog dialog = new AnimatedDialog();
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         int dialogWidth = (int) (getResources().getDisplayMetrics().widthPixels * 0.86f);
@@ -2741,11 +2860,11 @@ public class MainActivity extends AppCompatActivity {
         TextView message = questionView.findViewById(R.id.deleteDialogMessage);
         TextView cancelButton = questionView.findViewById(R.id.deleteDialogCancel);
         TextView confirmButton = questionView.findViewById(R.id.deleteDialogConfirm);
-        message.setText("确定删除选中的 " + selectedBooks.size() + " 本书和本地缓存吗？");
+        message.setText(messageText);
         cancelButton.setOnClickListener(v -> dialog.dismiss());
         confirmButton.setOnClickListener(v -> {
             dialog.dismiss();
-            deleteBooks(selectedBooks);
+            deleteBooks(books);
         });
         dialog.show();
         Window window = dialog.getWindow();
@@ -2819,6 +2938,7 @@ public class MainActivity extends AppCompatActivity {
             for (BookEntity book : books) {
                 book.category = normalizedFolderName;
                 book.updatedAt = now;
+                book.syncUpdatedAt = now;
                 database.bookDao().update(book);
             }
             saveFolderMetaIfNeeded(normalizedFolderName, now);
@@ -2843,6 +2963,7 @@ public class MainActivity extends AppCompatActivity {
             for (BookEntity book : selectedBooks) {
                 book.finishedAt = finished ? now : 0L;
                 book.updatedAt = now;
+                book.syncUpdatedAt = now;
                 database.bookDao().update(book);
             }
             runOnUiThread(() -> {
@@ -2865,13 +2986,15 @@ public class MainActivity extends AppCompatActivity {
         }
         meta.updatedAt = updatedAt;
         database.folderMetaDao().save(meta);
+        SyncRepository.requestAutomatic(this);
     }
 
     private void deleteBooks(List<BookEntity> books) {
         executor.execute(() -> {
             for (BookEntity book : books) {
+                SyncRepository.recordDeletion(this, "book", book.syncId, System.currentTimeMillis());
                 database.bookDao().delete(book);
-                deleteRecursively(new File(book.storageDirPath));
+                deleteRecursively(book.storageDirPath == null ? null : new File(book.storageDirPath));
             }
             runOnUiThread(() -> {
                 Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show();
@@ -2879,6 +3002,13 @@ public class MainActivity extends AppCompatActivity {
                 loadBooks();
             });
         });
+    }
+
+    private void markBookForSync(BookEntity book) {
+        long now = System.currentTimeMillis();
+        book.updatedAt = now;
+        book.syncUpdatedAt = now;
+        SyncRepository.requestAutomatic(this);
     }
 
     private static void deleteRecursively(File file) {

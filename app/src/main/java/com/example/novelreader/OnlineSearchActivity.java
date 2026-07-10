@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -88,12 +89,14 @@ public class OnlineSearchActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(createContentView());
+        hideSystemBars();
         loadSources();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        hideSystemBars();
         OnlineDownloadService.setListener(new OnlineDownloadService.Listener() {
             @Override
             public void onDownloadStatus(String message) {
@@ -121,6 +124,20 @@ public class OnlineSearchActivity extends AppCompatActivity {
     protected void onStop() {
         OnlineDownloadService.setListener(null);
         super.onStop();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        hideSystemBars();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemBars();
+        }
     }
 
     @Override
@@ -245,6 +262,14 @@ public class OnlineSearchActivity extends AppCompatActivity {
         sourceScroll.setClipToPadding(false);
         sourceScroll.setPadding(dpToPx(6), dpToPx(6), dpToPx(6), dpToPx(2));
         sourceScroll.setBackground(roundedBackground(COLOR_SURFACE_STRONG, 16, COLOR_LINE, 1));
+        sourceScroll.setNestedScrollingEnabled(true);
+        sourceScroll.setOnTouchListener((view, event) -> {
+            view.getParent().requestDisallowInterceptTouchEvent(
+                    event.getActionMasked() == MotionEvent.ACTION_DOWN
+                            || event.getActionMasked() == MotionEvent.ACTION_MOVE
+            );
+            return false;
+        });
         sourceList = new LinearLayout(this);
         sourceList.setOrientation(LinearLayout.VERTICAL);
         sourceScroll.addView(sourceList);
@@ -878,6 +903,17 @@ public class OnlineSearchActivity extends AppCompatActivity {
             drawable.setStroke(dpToPx(strokeDp), strokeColor);
         }
         return drawable;
+    }
+
+    private void hideSystemBars() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        );
     }
 
     private void showDialog(Dialog dialog) {

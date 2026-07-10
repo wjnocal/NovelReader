@@ -4,6 +4,7 @@ import androidx.room.Entity;
 import androidx.room.ForeignKey;
 import androidx.room.Index;
 import androidx.room.PrimaryKey;
+import androidx.annotation.NonNull;
 
 @Entity(
         tableName = "bookmarks",
@@ -28,4 +29,7 @@ public class BookmarkEntity {
     public String chapterTitle;
     public String summary;
     public long createdAt;
+    @NonNull
+    public String syncId = "";
+    public long updatedAt;
 }

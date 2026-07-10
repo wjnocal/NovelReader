@@ -17,9 +17,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
                 NoteEntity.class,
                 DailyReadingEntity.class,
                 FolderMetaEntity.class,
-                ImportRecordEntity.class
+                ImportRecordEntity.class,
+                SyncTombstoneEntity.class,
+                ReadingEventEntity.class
         },
-        version = 8,
+        version = 9,
         exportSchema = false
 )
 public abstract class AppDatabase extends RoomDatabase {
@@ -127,6 +129,22 @@ public abstract class AppDatabase extends RoomDatabase {
         }
     };
 
+    private static final Migration MIGRATION_8_9 = new Migration(8, 9) {
+        @Override
+        public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE books ADD COLUMN syncId TEXT NOT NULL DEFAULT ''");
+            database.execSQL("ALTER TABLE books ADD COLUMN syncContentHash TEXT NOT NULL DEFAULT ''");
+            database.execSQL("ALTER TABLE books ADD COLUMN syncUpdatedAt INTEGER NOT NULL DEFAULT 0");
+            database.execSQL("ALTER TABLE bookmarks ADD COLUMN syncId TEXT NOT NULL DEFAULT ''");
+            database.execSQL("ALTER TABLE bookmarks ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0");
+            database.execSQL("ALTER TABLE notes ADD COLUMN syncId TEXT NOT NULL DEFAULT ''");
+            database.execSQL("ALTER TABLE notes ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0");
+            database.execSQL("ALTER TABLE folder_meta ADD COLUMN syncId TEXT NOT NULL DEFAULT ''");
+            database.execSQL("CREATE TABLE IF NOT EXISTS sync_tombstones (key TEXT NOT NULL, entityType TEXT, syncId TEXT, deletedAt INTEGER NOT NULL, PRIMARY KEY(key))");
+            database.execSQL("CREATE TABLE IF NOT EXISTS reading_events (syncId TEXT NOT NULL, date TEXT, readingMillis INTEGER NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(syncId))");
+        }
+    };
+
     public abstract BookDao bookDao();
 
     public abstract ChapterDao chapterDao();
@@ -143,6 +161,10 @@ public abstract class AppDatabase extends RoomDatabase {
 
     public abstract ImportRecordDao importRecordDao();
 
+    public abstract SyncTombstoneDao syncTombstoneDao();
+
+    public abstract ReadingEventDao readingEventDao();
+
     public static AppDatabase getInstance(Context context) {
         if (instance == null) {
             synchronized (AppDatabase.class) {
@@ -151,7 +173,7 @@ public abstract class AppDatabase extends RoomDatabase {
                             context.getApplicationContext(),
                             AppDatabase.class,
                             "novel_reader.db"
-                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build();
+                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build();
                 }
             }
         }

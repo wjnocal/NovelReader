@@ -4,6 +4,7 @@ import androidx.room.Entity;
 import androidx.room.ForeignKey;
 import androidx.room.Index;
 import androidx.room.PrimaryKey;
+import androidx.annotation.NonNull;
 
 @Entity(
         tableName = "notes",
@@ -27,4 +28,7 @@ public class NoteEntity {
     public String noteText;
     public int color;
     public long createdAt;
+    @NonNull
+    public String syncId = "";
+    public long updatedAt;
 }

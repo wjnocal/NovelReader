@@ -14,8 +14,8 @@ android {
         applicationId = "com.example.novelreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3000
-        versionName = "3.0"
+        versionCode = 3110
+        versionName = "3.110"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -44,6 +44,7 @@ dependencies {
     implementation(libs.room.runtime)
     annotationProcessor(libs.room.compiler)
     implementation(libs.jsoup)
+    implementation(libs.okhttp)
     testImplementation(libs.junit)
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.ext.junit)
