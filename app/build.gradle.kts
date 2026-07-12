@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.novelreader"
+    namespace = "com.wjnocal.novelreader"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -11,11 +11,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.novelreader"
+        applicationId = "com.wjnocal.novelreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3110
-        versionName = "3.110"
+        versionCode = 3111
+        versionName = "3.111"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
