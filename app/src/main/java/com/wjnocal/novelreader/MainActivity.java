@@ -61,6 +61,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
@@ -126,6 +127,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String[]> avatarLauncher;
     private ActivityResultLauncher<Intent> avatarCropLauncher;
     private ActivityResultLauncher<String[]> rebindLauncher;
+    private ActivityResultLauncher<Intent> exportLauncher;
     private ActivityResultLauncher<String> backupLauncher;
     private ActivityResultLauncher<String[]> restoreLauncher;
     private RecyclerView recyclerView;
@@ -139,6 +141,7 @@ public class MainActivity extends AppCompatActivity {
     private int mainTab = TAB_BOOKSHELF;
     private String categoryFilter = CATEGORY_ALL;
     private String pendingBackupJson;
+    private File pendingExportFile;
     private long pendingRebindBookId = -1L;
     private boolean moreMenuVisible;
 
@@ -267,6 +270,13 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         rebindLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::handleRebindUri);
+        exportLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                writeExportToUri(result.getData().getData());
+            } else {
+                pendingExportFile = null;
+            }
+        });
         backupLauncher = registerForActivityResult(new ActivityResultContracts.CreateDocument("application/json"), this::writeBackupToUri);
         restoreLauncher = registerForActivityResult(new ActivityResultContracts.OpenDocument(), this::restoreFromUri);
         importButton = findViewById(R.id.importButton);
@@ -1393,6 +1403,10 @@ public class MainActivity extends AppCompatActivity {
             hideBookActionMenu();
             showRenameBookDialog(book);
         }));
+        menu.addView(createBookActionOption("导出 TXT/EPUB", v -> {
+            hideBookActionMenu();
+            startExportBook(book);
+        }));
         menu.addView(createBookActionOption("删除", v -> {
             hideBookActionMenu();
             confirmDeleteBook(book);
@@ -2148,6 +2162,53 @@ public class MainActivity extends AppCompatActivity {
         } finally {
             pendingBackupJson = null;
         }
+    }
+
+    private void startExportBook(BookEntity book) {
+        File source = book.originalFilePath == null ? null : new File(book.originalFilePath);
+        if (source == null || !source.isFile()) {
+            Toast.makeText(this, "原始文件不存在，请先重新绑定", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String lowerName = source.getName().toLowerCase(Locale.US);
+        String extension = lowerName.endsWith(".epub") ? ".epub" : ".txt";
+        String mimeType = ".epub".equals(extension) ? "application/epub+zip" : "text/plain";
+        String title = book.title == null || book.title.trim().isEmpty() ? "novel" : book.title.trim();
+        title = title.replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (!title.toLowerCase(Locale.US).endsWith(extension)) {
+            title += extension;
+        }
+        pendingExportFile = source;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mimeType);
+        intent.putExtra(Intent.EXTRA_TITLE, title);
+        exportLauncher.launch(intent);
+    }
+
+    private void writeExportToUri(Uri uri) {
+        File source = pendingExportFile;
+        pendingExportFile = null;
+        if (uri == null || source == null || !source.isFile()) {
+            return;
+        }
+        executor.execute(() -> {
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = getContentResolver().openOutputStream(uri, "w")) {
+                if (output == null) {
+                    throw new IllegalArgumentException("无法创建导出文件");
+                }
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, read);
+                }
+                output.flush();
+                uiHandler.post(() -> Toast.makeText(this, "导出完成", Toast.LENGTH_SHORT).show());
+            } catch (Exception e) {
+                uiHandler.post(() -> Toast.makeText(this, "导出失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        });
     }
 
     private void restoreFromUri(Uri uri) {
