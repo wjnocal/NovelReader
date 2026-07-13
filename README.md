@@ -108,7 +108,7 @@ https://dav.jianguoyun.com/dav/
 ## 项目结构
 
 ```text
-app/src/main/java/com/example/novelreader/
+app/src/main/java/com/wjnocal/novelreader/
 ├── data/       Room 数据库、实体和 DAO
 ├── online/     在线书源、搜索和后台下载
 ├── parser/     TXT、EPUB 导入与章节解析
