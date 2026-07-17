@@ -7,6 +7,7 @@ NovelReader 是一款 Android 本地小说阅读器，支持 TXT、EPUB 导入�
 ## 下载
 
 - [下载最新 APK](https://github.com/wjnocal/NovelReader/releases/latest/download/novelreader.apk)
+- [下载鸿蒙版 HAP（v1.0.0）](https://github.com/wjnocal/NovelReader-HarmonyOS/releases/download/v1.0.0/NovelReader-HarmonyOS-v1.0.0.hap)
 - [查看全部版本](https://github.com/wjnocal/NovelReader/releases)
 
 当前提供 Android 7.0（API 24）及以上可安装的 APK。若设备上已安装由其他签名生成的同包名版本，请先卸载旧版本再安装。
