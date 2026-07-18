@@ -11,8 +11,10 @@ import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.annotation.SuppressLint;
 import android.text.Layout;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -48,9 +50,14 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.graphics.drawable.GradientDrawable;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -76,6 +83,11 @@ import com.wjnocal.novelreader.sync.SyncPreferences;
 import com.wjnocal.novelreader.parser.ParsedBook;
 import com.wjnocal.novelreader.parser.ParsedChapter;
 import com.wjnocal.novelreader.parser.TxtParser;
+import com.wjnocal.novelreader.online.OnlineBookSource;
+import com.wjnocal.novelreader.online.OnlinePageExtractor;
+import com.wjnocal.novelreader.online.OnlineSourceRepository;
+
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -97,6 +109,7 @@ import java.util.concurrent.Executors;
 
 public class ReaderActivity extends AppCompatActivity {
     private static final String EXTRA_BOOK_ID = "book_id";
+    private static final String EXTRA_ONLINE_URL = "online_url";
     private static final int MODE_PAGED = 0;
     private static final int MODE_SCROLL = 1;
     private static final int DRAWER_CATALOG = 0;
@@ -126,6 +139,12 @@ public class ReaderActivity extends AppCompatActivity {
     private List<BookmarkEntity> bookmarks = new ArrayList<>();
     private List<NoteEntity> notes = new ArrayList<>();
     private ReaderSettingsEntity settings;
+    private boolean onlineMode;
+    private String onlineCurrentUrl = "";
+    private String onlinePreviousUrl = "";
+    private String onlineNextUrl = "";
+    private int onlinePendingDirection;
+    private WebView onlineWebView;
 
     private DrawerLayout readerDrawer;
     private FrameLayout root;
@@ -239,14 +258,33 @@ public class ReaderActivity extends AppCompatActivity {
         return intent;
     }
 
+    public static Intent createOnlineIntent(Context context, String url) {
+        Intent intent = new Intent(context, ReaderActivity.class);
+        intent.putExtra(EXTRA_ONLINE_URL, url);
+        return intent;
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_reader);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (readerDrawer != null && readerDrawer.isDrawerOpen(GravityCompat.START)) {
+                    readerDrawer.closeDrawer(GravityCompat.START);
+                } else {
+                    finish();
+                }
+            }
+        });
         database = AppDatabase.getInstance(this);
         readingStatsPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         notesExportLauncher = registerForActivityResult(new ActivityResultContracts.CreateDocument("text/markdown"), this::writeNotesExportToUri);
         bookId = getIntent().getLongExtra(EXTRA_BOOK_ID, -1);
+        onlineCurrentUrl = getIntent().getStringExtra(EXTRA_ONLINE_URL);
+        onlineCurrentUrl = onlineCurrentUrl == null ? "" : onlineCurrentUrl.trim();
+        onlineMode = !onlineCurrentUrl.isEmpty();
 
         bindViews();
         setupSystemBars();
@@ -286,15 +324,6 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onBackPressed() {
-        if (readerDrawer != null && readerDrawer.isDrawerOpen(GravityCompat.START)) {
-            readerDrawer.closeDrawer(GravityCompat.START);
-            return;
-        }
-        super.onBackPressed();
-    }
-
-    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             if (event == null || event.getRepeatCount() == 0) {
@@ -307,9 +336,15 @@ public class ReaderActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
         statusHandler.removeCallbacks(statusRunnable);
+        if (onlineWebView != null) {
+            onlineWebView.stopLoading();
+            onlineWebView.removeJavascriptInterface("NovelReaderBridge");
+            onlineWebView.destroy();
+            onlineWebView = null;
+        }
         executor.shutdown();
+        super.onDestroy();
     }
 
     private void handleVolumePageKey(int keyCode) {
@@ -424,6 +459,9 @@ public class ReaderActivity extends AppCompatActivity {
 
         chaptersAdapter = new ChaptersAdapter(chapter -> {
             readerDrawer.closeDrawer(GravityCompat.START);
+            if (onlineMode) {
+                return;
+            }
             openChapter(chapter.chapterIndex, 0, 0);
         });
         catalogRecyclerView.setAdapter(chaptersAdapter);
@@ -502,6 +540,10 @@ public class ReaderActivity extends AppCompatActivity {
 
             @Override
             public void onLongPress(MotionEvent e) {
+                if (onlineMode) {
+                    Toast.makeText(ReaderActivity.this, "在线阅读暂不保存笔记，请下载到书架后使用", Toast.LENGTH_SHORT).show();
+                    return;
+                }
                 if (pageAnimating || pageDragActive) {
                     return;
                 }
@@ -544,11 +586,19 @@ public class ReaderActivity extends AppCompatActivity {
         bookmarkButton.setOnClickListener(v -> toggleBookmark());
         settingsButton.setOnClickListener(v -> showInlineSettingsPanel());
         previousButton.setOnClickListener(v -> {
+            if (onlineMode) {
+                loadOnlineChapter(onlinePreviousUrl, 1);
+                return;
+            }
             if (book != null) {
                 openChapter(book.currentChapterIndex - 1, 0, OPEN_LAST_PAGE);
             }
         });
         nextButton.setOnClickListener(v -> {
+            if (onlineMode) {
+                loadOnlineChapter(onlineNextUrl, -1);
+                return;
+            }
             if (book != null) {
                 openChapter(book.currentChapterIndex + 1, 0, 0);
             }
@@ -621,6 +671,10 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void loadReader() {
+        if (onlineMode) {
+            loadOnlineReader();
+            return;
+        }
         executor.execute(() -> {
             book = database.bookDao().getById(bookId);
             chapters = database.chapterDao().getForBook(bookId);
@@ -644,6 +698,162 @@ public class ReaderActivity extends AppCompatActivity {
                 contentView.postDelayed(this::maybeShowReaderGuide, 500L);
             });
         });
+    }
+
+    private void loadOnlineReader() {
+        executor.execute(() -> {
+            settings = database.readerSettingsDao().get();
+            if (settings == null) {
+                settings = new ReaderSettingsEntity();
+                database.readerSettingsDao().save(settings);
+            }
+            runOnUiThread(() -> {
+                book = new BookEntity();
+                book.title = "在线阅读";
+                book.fileType = "online-live";
+                book.totalChapters = 1;
+                book.currentChapterIndex = 0;
+                chapters = new ArrayList<>();
+                bookmarks = new ArrayList<>();
+                notes = new ArrayList<>();
+                drawerBookTitle.setText("在线阅读");
+                bookmarksTab.setVisibility(View.GONE);
+                bookmarksIndicator.setVisibility(View.GONE);
+                notesTab.setVisibility(View.GONE);
+                notesIndicator.setVisibility(View.GONE);
+                bookmarkButton.setText("网页模式");
+                bookmarkButton.setEnabled(false);
+                chapterSplitLabel.setVisibility(View.GONE);
+                chapterSplitButton.setVisibility(View.GONE);
+                applyReaderSettings();
+                setupOnlineWebView();
+                loadOnlineChapter(onlineCurrentUrl, 0);
+            });
+        });
+    }
+
+    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
+    private void setupOnlineWebView() {
+        onlineWebView = new WebView(this);
+        WebSettings webSettings = onlineWebView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setDatabaseEnabled(true);
+        webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        onlineWebView.addJavascriptInterface(new OnlineReaderBridge(), "NovelReaderBridge");
+        onlineWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                view.postDelayed(() -> extractOnlineChapter(url), 450L);
+            }
+        });
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(1, 1);
+        params.leftMargin = -2;
+        params.topMargin = -2;
+        onlineWebView.setAlpha(0.01f);
+        root.addView(onlineWebView, params);
+    }
+
+    private void loadOnlineChapter(String url, int direction) {
+        String target = url == null ? "" : url.trim();
+        if (target.isEmpty()) {
+            pageAnimating = false;
+            Toast.makeText(this, direction < 0 ? "未识别到下一章" : "未识别到上一章", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (onlineWebView == null) {
+            pageAnimating = false;
+            return;
+        }
+        onlinePendingDirection = direction;
+        pageAnimating = direction != 0;
+        onlineCurrentUrl = target;
+        setReaderControlsVisible(false, false);
+        titleView.setText("正在读取网页...");
+        contentView.setText("正在自动识别章节正文与上下章链接");
+        previousButton.setEnabled(false);
+        nextButton.setEnabled(false);
+        onlineWebView.loadUrl(target);
+    }
+
+    private void extractOnlineChapter(String url) {
+        OnlineBookSource source = null;
+        try {
+            source = new OnlineSourceRepository(this).findSourceForUrl(url);
+        } catch (Exception ignored) {
+        }
+        onlineWebView.evaluateJavascript(OnlinePageExtractor.buildScript(source), null);
+    }
+
+    private void renderOnlineChapter(JSONObject data) {
+        String content = data.optString("content").trim();
+        String title = data.optString("title").trim();
+        if (content.length() < 40) {
+            onOnlineChapterError("没有识别到足够的正文，请确认当前是章节阅读页");
+            return;
+        }
+        onlineCurrentUrl = data.optString("url", onlineCurrentUrl);
+        onlinePreviousUrl = data.optString("previousUrl").trim();
+        onlineNextUrl = data.optString("nextUrl").trim();
+        String bookTitle = data.optString("bookTitle").trim();
+        if (!bookTitle.isEmpty()) {
+            book.title = bookTitle;
+            drawerBookTitle.setText(bookTitle + " · 在线");
+        }
+        if (title.isEmpty()) {
+            title = "在线章节";
+        }
+        ChapterEntity chapter = new ChapterEntity();
+        chapter.bookId = -1L;
+        chapter.chapterIndex = 0;
+        chapter.title = title;
+        chapters = new ArrayList<>();
+        chapters.add(chapter);
+        book.currentChapterIndex = 0;
+        book.currentPageIndex = 0;
+        book.currentPageStartOffset = 0;
+        currentChapterTitle = title;
+        titleView.setText(title);
+        buildCurrentDisplayText(title, content);
+        previousButton.setEnabled(!onlinePreviousUrl.isEmpty());
+        nextButton.setEnabled(!onlineNextUrl.isEmpty());
+        refreshDrawerLists();
+        int direction = onlinePendingDirection;
+        onlinePendingDirection = 0;
+        pageAnimating = false;
+        if (isPagedMode()) {
+            renderPagedChapter(direction > 0 ? OPEN_LAST_PAGE : 0, direction);
+        } else {
+            renderScrollChapter(direction > 0 ? Integer.MAX_VALUE : 0);
+        }
+        updateNovelProgress();
+    }
+
+    private void onOnlineChapterError(String message) {
+        pageAnimating = false;
+        titleView.setText("网页识别失败");
+        contentView.setText(message);
+        previousButton.setEnabled(!onlinePreviousUrl.isEmpty());
+        nextButton.setEnabled(!onlineNextUrl.isEmpty());
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private final class OnlineReaderBridge {
+        @JavascriptInterface
+        public void onChapterExtracted(String json) {
+            runOnUiThread(() -> {
+                try {
+                    renderOnlineChapter(new JSONObject(json));
+                } catch (Exception e) {
+                    onOnlineChapterError("网页数据解析失败：" + e.getMessage());
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void onChapterError(String message) {
+            runOnUiThread(() -> onOnlineChapterError("网页识别失败：" + message));
+        }
     }
 
     private void maybeShowReaderGuide() {
@@ -1640,6 +1850,8 @@ public class ReaderActivity extends AppCompatActivity {
         setReaderControlsVisible(false, true);
         if (book.currentPageIndex < currentPages.size() - 1) {
             renderPage(book.currentPageIndex + 1, -1);
+        } else if (onlineMode) {
+            loadOnlineChapter(onlineNextUrl, -1);
         } else if (book.currentChapterIndex < chapters.size() - 1) {
             pageAnimating = true;
             openChapter(book.currentChapterIndex + 1, 0, 0, -1);
@@ -1649,7 +1861,7 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void markBookFinished() {
-        if (book == null || book.finishedAt > 0) {
+        if (onlineMode || book == null || book.finishedAt > 0) {
             return;
         }
         book.finishedAt = System.currentTimeMillis();
@@ -1753,6 +1965,8 @@ public class ReaderActivity extends AppCompatActivity {
         setReaderControlsVisible(false, true);
         if (book.currentPageIndex > 0) {
             renderPage(book.currentPageIndex - 1, 1);
+        } else if (onlineMode) {
+            loadOnlineChapter(onlinePreviousUrl, 1);
         } else if (book.currentChapterIndex > 0) {
             pageAnimating = true;
             openChapter(book.currentChapterIndex - 1, 0, OPEN_LAST_PAGE, 1);
@@ -2172,7 +2386,7 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void saveProgress() {
-        if (book == null) {
+        if (onlineMode || book == null) {
             return;
         }
         if (isPagedMode()) {
@@ -2247,6 +2461,14 @@ public class ReaderActivity extends AppCompatActivity {
         if (chaptersAdapter != null) {
             chaptersAdapter.submitList(chapters, book == null ? 0 : book.currentChapterIndex);
             catalogRecyclerView.scrollToPosition(book == null ? 0 : book.currentChapterIndex);
+        }
+        if (onlineMode) {
+            bookmarks = new ArrayList<>();
+            notes = new ArrayList<>();
+            if (bookmarksAdapter != null) bookmarksAdapter.submitList(bookmarks);
+            if (notesAdapter != null) notesAdapter.submitList(notes);
+            showDrawerPage(DRAWER_CATALOG);
+            return;
         }
         loadBookmarks();
         loadNotes();
@@ -2804,6 +3026,10 @@ public class ReaderActivity extends AppCompatActivity {
     }
 
     private void toggleBookmark() {
+        if (onlineMode) {
+            Toast.makeText(this, "在线阅读不保存书签，可先下载到书架", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (book == null) {
             return;
         }
@@ -3318,8 +3544,10 @@ public class ReaderActivity extends AppCompatActivity {
         @Override
         public void updateDrawState(TextPaint textPaint) {
             textPaint.setUnderlineText(true);
-            textPaint.underlineColor = color;
-            textPaint.underlineThickness = Math.max(2.5f, textPaint.density * 2.5f);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                textPaint.underlineColor = color;
+                textPaint.underlineThickness = Math.max(2.5f, textPaint.density * 2.5f);
+            }
         }
     }
 

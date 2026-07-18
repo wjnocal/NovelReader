@@ -31,6 +31,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.wjnocal.novelreader.online.OnlineBookClient;
 import com.wjnocal.novelreader.online.OnlineBookResult;
@@ -90,6 +93,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(createContentView());
         hideSystemBars();
+        applyTopSafeArea(pageScrollView);
         loadSources();
     }
 
@@ -167,8 +171,11 @@ public class OnlineSearchActivity extends AppCompatActivity {
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(25f);
         title.setTypeface(null, Typeface.BOLD);
+        TextView browser = textButton("浏览器");
+        browser.setOnClickListener(v -> startActivity(BrowserActivity.createIntent(this, keywordInput == null ? "" : keywordInput.getText().toString().trim())));
         topBar.addView(back, new LinearLayout.LayoutParams(dpToPx(82), dpToPx(46)));
         topBar.addView(title, new LinearLayout.LayoutParams(0, dpToPx(44), 1f));
+        topBar.addView(browser, new LinearLayout.LayoutParams(dpToPx(72), dpToPx(46)));
         LinearLayout.LayoutParams topParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -303,6 +310,21 @@ public class OnlineSearchActivity extends AppCompatActivity {
         return pageScrollView;
     }
 
+    private void applyTopSafeArea(View rootView) {
+        int initialLeft = rootView.getPaddingLeft();
+        int initialTop = rootView.getPaddingTop();
+        int initialRight = rootView.getPaddingRight();
+        int initialBottom = rootView.getPaddingBottom();
+        ViewCompat.setOnApplyWindowInsetsListener(rootView, (view, windowInsets) -> {
+            Insets cutout = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout());
+            Insets systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+            int safeTop = Math.max(cutout.top, systemBars.top);
+            view.setPadding(initialLeft, initialTop + safeTop, initialRight, initialBottom);
+            return windowInsets;
+        });
+        ViewCompat.requestApplyInsets(rootView);
+    }
+
     private void loadSources() {
         executor.execute(() -> {
             try {
@@ -375,11 +397,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
             Toast.makeText(this, "站点地址为空", Toast.LENGTH_SHORT).show();
             return;
         }
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-        } catch (Exception e) {
-            Toast.makeText(this, "无法打开浏览器：" + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+        startActivity(BrowserActivity.createIntent(this, url));
     }
 
     private void setAllSearchSourcesChecked(boolean checked) {
@@ -645,7 +663,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
         progressBar.setIndeterminate(true);
         content.addView(progressBar);
         TextView progressText = messageText(message);
-        progressText.setId(1001);
+        progressText.setId(View.generateViewId());
         content.addView(progressText);
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(android.view.Gravity.END);

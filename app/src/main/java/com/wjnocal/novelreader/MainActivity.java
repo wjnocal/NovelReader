@@ -1,6 +1,7 @@
 package com.wjnocal.novelreader;
 
 import android.app.Dialog;
+import android.annotation.SuppressLint;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
@@ -34,6 +35,7 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.activity.EdgeToEdge;
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -154,6 +156,12 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleBackNavigation();
+            }
+        });
         hideSystemBars();
         database = AppDatabase.getInstance(this);
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -197,6 +205,7 @@ public class MainActivity extends AppCompatActivity {
         TextView homeHistoryButton = findViewById(R.id.homeHistoryButton);
         TextView homeImportButton = findViewById(R.id.homeImportButton);
         TextView homeOnlineSearchButton = findViewById(R.id.homeOnlineSearchButton);
+        TextView homeBrowserButton = findViewById(R.id.homeBrowserButton);
         onboardingChecklist = findViewById(R.id.onboardingChecklist);
         onboardingChecklistItems = findViewById(R.id.onboardingChecklistItems);
         TextView onboardingChecklistDismiss = findViewById(R.id.onboardingChecklistDismiss);
@@ -206,6 +215,7 @@ public class MainActivity extends AppCompatActivity {
         TextView menuImportButton = findViewById(R.id.menuImportButton);
         TextView menuImportRecordsButton = findViewById(R.id.menuImportRecordsButton);
         TextView menuOnlineSearchButton = findViewById(R.id.menuOnlineSearchButton);
+        TextView menuBrowserButton = findViewById(R.id.menuBrowserButton);
         TextView menuSortButton = findViewById(R.id.menuSortButton);
         menuListModeButton = findViewById(R.id.menuListModeButton);
         TextView menuCategoryButton = findViewById(R.id.menuCategoryButton);
@@ -295,6 +305,12 @@ public class MainActivity extends AppCompatActivity {
         };
         menuOnlineSearchButton.setOnClickListener(onlineSearchClickListener);
         homeOnlineSearchButton.setOnClickListener(onlineSearchClickListener);
+        View.OnClickListener browserClickListener = v -> {
+            hideMoreMenu();
+            startActivity(BrowserActivity.createIntent(this, ""));
+        };
+        menuBrowserButton.setOnClickListener(browserClickListener);
+        homeBrowserButton.setOnClickListener(browserClickListener);
         menuImportRecordsButton.setOnClickListener(v -> showImportRecordsDialog());
         cancelSelectionButton.setOnClickListener(v -> exitSelectionMode());
         groupSelectedButton.setOnClickListener(v -> showGroupSelectedDialog());
@@ -365,8 +381,7 @@ public class MainActivity extends AppCompatActivity {
         executor.shutdown();
     }
 
-    @Override
-    public void onBackPressed() {
+    private void handleBackNavigation() {
         if (mainTab == TAB_HOME) {
             switchMainTab(TAB_BOOKSHELF);
             return;
@@ -387,7 +402,7 @@ public class MainActivity extends AppCompatActivity {
             exitGroupView();
             return;
         }
-        super.onBackPressed();
+        finish();
     }
 
     private void handleImportUri(Uri uri) {
@@ -2721,6 +2736,7 @@ public class MainActivity extends AppCompatActivity {
         picker.post(() -> applyNumberPickerInternals(picker));
     }
 
+    @SuppressLint("SoonBlockedPrivateApi")
     private void applyNumberPickerInternals(NumberPicker picker) {
         styleNumberPickerText(picker);
         invokeNumberPickerColorSetter(picker, "setTextColor", 0xFF111111);

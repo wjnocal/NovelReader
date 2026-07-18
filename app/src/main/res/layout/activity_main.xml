@@ -459,6 +459,19 @@
                     android:textColor="#111111" />
 
                 <TextView
+                    android:id="@+id/homeBrowserButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bottom_nav_pill_background"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="网页浏览器 · 在线阅读"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="#111111" />
+
+                <TextView
                     android:id="@+id/homeBackupButton"
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
@@ -576,6 +589,17 @@
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
             android:text="在线搜书"
+            android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+            android:textColor="#111111" />
+
+        <TextView
+            android:id="@+id/menuBrowserButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="网页浏览器"
             android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
             android:textColor="#111111" />
 

@@ -1,6 +1,7 @@
 package com.wjnocal.novelreader.online;
 
 import android.content.Context;
+import android.util.Base64;
 
 import com.wjnocal.novelreader.data.AppDatabase;
 import com.wjnocal.novelreader.data.BookEntity;
@@ -11,6 +12,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -306,7 +308,9 @@ public class OnlineBookClient {
 
     private Document requestSearchDocument(OnlineBookSource source, String keyword) throws Exception {
         String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8.name());
-        String url = source.search.url.replace("%s", encodedKeyword);
+        String url = source.search.url.startsWith("@js:")
+                ? buildDynamicSearchUrl(source, keyword)
+                : source.search.url.replace("%s", encodedKeyword);
         Connection connection = Jsoup.connect(url)
                 .userAgent(USER_AGENT)
                 .referrer(source.baseUrl)
@@ -320,9 +324,46 @@ public class OnlineBookClient {
                 String value = source.search.data.optString(key);
                 connection.data(key, "%s".equals(value) ? keyword : value);
             }
-            return connection.method(Connection.Method.POST).post();
+            return preprocessSearchDocument(source, connection.method(Connection.Method.POST).post());
         }
-        return connection.get();
+        return preprocessSearchDocument(source, connection.get());
+    }
+
+    private String buildDynamicSearchUrl(OnlineBookSource source, String keyword) throws Exception {
+        if (!"quanben5".equals(source.id)) {
+            throw new IllegalArgumentException("暂不支持这个书源的动态搜索地址");
+        }
+        String alphabet = "PXhw7UT1B0a9kQDKZsjIASmOezxYG4CHo5Jyfg2b8FLpEvRr3WtVnlqMidu6cN";
+        String encoded = URLEncoder.encode(keyword, StandardCharsets.UTF_8.name()).replace("+", "%20");
+        StringBuilder encrypted = new StringBuilder();
+        for (int i = 0; i < encoded.length(); i++) {
+            char value = encoded.charAt(i);
+            int index = alphabet.indexOf(value);
+            char shifted = index < 0 ? value : alphabet.charAt((index + 3) % alphabet.length());
+            encrypted.append(alphabet.charAt(random.nextInt(alphabet.length())))
+                    .append(shifted)
+                    .append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return "https://quanben5.com/?c=book&a=search.json&callback=search&keywords="
+                + encoded + "&b=" + URLEncoder.encode(encrypted.toString(), StandardCharsets.UTF_8.name());
+    }
+
+    private Document preprocessSearchDocument(OnlineBookSource source, Document document) {
+        if (!"quanben5".equals(source.id)) {
+            return document;
+        }
+        try {
+            String response = document.body() == null ? document.text() : document.body().text();
+            Matcher matcher = Pattern.compile("search\\((\\{.*\\})\\)\\s*;?", Pattern.DOTALL).matcher(response);
+            if (matcher.find()) {
+                String content = new JSONObject(matcher.group(1)).optString("content");
+                if (!content.trim().isEmpty()) {
+                    return Jsoup.parse(content, source.baseUrl);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return document;
     }
 
     private OnlineBookInfo parseBookInfo(OnlineBookSource source, OnlineBookResult result) throws Exception {
@@ -361,6 +402,7 @@ public class OnlineBookClient {
                 continue;
             }
             Document document = requestDocument(tocUrl, source);
+            applyTocTransform(document, source);
             Elements elements = selectElements(document, source.toc.item);
             appendChapterRefs(source, chapters, elements);
             for (String nextUrl : extractTocPageUrls(document, source)) {
@@ -724,7 +766,7 @@ public class OnlineBookClient {
             selectElements(elements, rule.filterTag).remove();
         }
         StringBuilder builder = new StringBuilder();
-        String html = elements.html()
+        String html = transformChapterHtml(elements.html(), rule)
                 .replaceAll("(?i)<br\\s*/?>", "\n")
                 .replaceAll("(?i)</(p|div|dd|li|section|article)>", "\n")
                 .replaceAll("(?i)<(p|div|dd|li|section|article)(\\s[^>]*)?>", "\n");
@@ -739,6 +781,69 @@ public class OnlineBookClient {
             text = text.replaceAll(rule.filterTxt, "");
         }
         return normalizeParagraphs(text);
+    }
+
+    private String transformChapterHtml(String html, OnlineBookSource.ChapterRule rule) {
+        String transformed = html == null ? "" : html;
+        if (transformed.contains("document.writeln") || (rule.content != null && rule.content.contains("base64.decode"))) {
+            Matcher matcher = Pattern.compile("document\\.writeln\\(qsbs\\.bb\\(['\"]([^'\"]+)['\"]\\)\\);?", Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(transformed);
+            StringBuffer output = new StringBuffer();
+            while (matcher.find()) {
+                String decoded = decodeBase64Utf8(matcher.group(1));
+                matcher.appendReplacement(output, Matcher.quoteReplacement(decoded));
+            }
+            matcher.appendTail(output);
+            transformed = output.toString();
+        }
+        if (transformed.contains("data-id=") && rule.content != null && rule.content.contains("data-id")) {
+            Matcher matcher = Pattern.compile("(?is)<dd\\s+[^>]*data-id=['\"]?(\\d+)['\"]?[^>]*>(.*?)</dd>").matcher(transformed);
+            List<DataIdBlock> blocks = new ArrayList<>();
+            while (matcher.find()) {
+                blocks.add(new DataIdBlock(Integer.parseInt(matcher.group(1)), matcher.group(2)));
+            }
+            if (!blocks.isEmpty()) {
+                blocks.sort((left, right) -> Integer.compare(left.id, right.id));
+                StringBuilder ordered = new StringBuilder();
+                for (DataIdBlock block : blocks) ordered.append(block.html);
+                transformed = ordered.toString();
+            }
+        }
+        return transformed;
+    }
+
+    private String decodeBase64Utf8(String encoded) {
+        try {
+            return new String(Base64.decode(encoded, Base64.DEFAULT), StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return encoded;
+        }
+    }
+
+    private void applyTocTransform(Document document, OnlineBookSource source) {
+        if (!"wxsy".equals(source.id)) {
+            return;
+        }
+        String html = document.html();
+        int hiddenFromStart = countMatches(html, "\\.section-list\\.ycxsid\\s*>\\s*li:nth-child\\(\\d+\\)\\s*\\{\\s*display\\s*:\\s*none");
+        int hiddenFromEnd = countMatches(html, "\\.section-list\\.ycxsid\\s*>\\s*li:nth-last-child\\(\\d+\\)\\s*\\{\\s*display\\s*:\\s*none");
+        for (Element list : document.select("ul.section-list.ycxsid")) {
+            Elements items = list.select(":scope > li");
+            for (int i = 0; i < hiddenFromStart && !items.isEmpty(); i++) {
+                items.first().remove();
+                items = list.select(":scope > li");
+            }
+            for (int i = 0; i < hiddenFromEnd && !items.isEmpty(); i++) {
+                items.last().remove();
+                items = list.select(":scope > li");
+            }
+        }
+    }
+
+    private int countMatches(String value, String regex) {
+        int count = 0;
+        Matcher matcher = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(value);
+        while (matcher.find()) count++;
+        return count;
     }
 
     private void appendParagraph(StringBuilder builder, String value) {
@@ -791,6 +896,10 @@ public class OnlineBookClient {
             return new Elements();
         }
         String selector = splitJsRule(rule)[0];
+        int javaIndex = selector.indexOf("@java:");
+        if (javaIndex >= 0) {
+            selector = selector.substring(0, javaIndex).trim();
+        }
         if (selector.isEmpty()) {
             return new Elements();
         }
@@ -993,6 +1102,16 @@ public class OnlineBookClient {
         ChapterDownload(int index, String content) {
             this.index = index;
             this.content = content;
+        }
+    }
+
+    private static class DataIdBlock {
+        final int id;
+        final String html;
+
+        DataIdBlock(int id, String html) {
+            this.id = id;
+            this.html = html;
         }
     }
 

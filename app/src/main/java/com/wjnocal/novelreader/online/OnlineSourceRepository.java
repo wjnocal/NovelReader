@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.net.URI;
 
 public class OnlineSourceRepository {
     private static final String SOURCE_FILE = "online_sources.json";
@@ -59,11 +60,42 @@ public class OnlineSourceRepository {
             if (sourceIds != null && !sourceIds.isEmpty() && !sourceIds.contains(source.id)) {
                 continue;
             }
-            if (target.startsWith(source.baseUrl)) {
+            if (matchesSourceUrl(target, source.baseUrl)) {
                 return source;
             }
         }
         return null;
+    }
+
+    public OnlineBookSource findSourceForUrl(String url) throws Exception {
+        String target = url == null ? "" : url.trim();
+        for (OnlineBookSource source : loadAllSources()) {
+            if (matchesSourceUrl(target, source.baseUrl)) {
+                return source;
+            }
+        }
+        return null;
+    }
+
+    private boolean matchesSourceUrl(String target, String baseUrl) {
+        if (target.isEmpty() || baseUrl == null || baseUrl.trim().isEmpty()) {
+            return false;
+        }
+        if (target.startsWith(baseUrl)) {
+            return true;
+        }
+        try {
+            String targetHost = URI.create(target).getHost();
+            String sourceHost = URI.create(baseUrl).getHost();
+            if (targetHost == null || sourceHost == null) {
+                return false;
+            }
+            targetHost = targetHost.replaceFirst("^www\\.", "");
+            sourceHost = sourceHost.replaceFirst("^www\\.", "");
+            return targetHost.equalsIgnoreCase(sourceHost);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private OnlineBookSource parseSource(JSONObject object) {

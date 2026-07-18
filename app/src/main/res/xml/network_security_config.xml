@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">xbiqugu.la</domain>
+        <domain includeSubdomains="true">mcxs.la</domain>
+        <domain includeSubdomains="true">99wx.info</domain>
+        <domain includeSubdomains="true">xbiquwk.com</domain>
+        <domain includeSubdomains="true">ujxsw.org</domain>
+        <domain includeSubdomains="true">yeudusk.com</domain>
+        <domain includeSubdomains="true">xhytd.com</domain>
+        <domain includeSubdomains="true">dongtanxs.com</domain>
+    </domain-config>
+</network-security-config>

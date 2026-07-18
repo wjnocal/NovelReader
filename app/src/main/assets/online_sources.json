@@ -123,11 +123,11 @@
   {
     "id": "nines",
     "name": "鸟书网",
-    "baseUrl": "http://www.99xs.info/",
+    "baseUrl": "http://www.99wx.info/",
     "enabled": true,
     "comment": "搜索有限流",
     "search": {
-      "url": "http://www.99xs.info/read/search/",
+      "url": "http://www.99wx.info/read/search/",
       "method": "post",
       "data": {
         "searchkey": "%s"
@@ -333,8 +333,8 @@
     "id": "wxsy",
     "name": "顶点小说",
     "baseUrl": "https://www.wxsy.net/",
-    "enabled": false,
-    "comment": "默认书源；正文和目录依赖 JS/base64 规则，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "搜索、详情、章节有限流；已适配目录去伪项与 Base64 正文",
     "search": {
       "url": "https://www.wxsy.net/search.html",
       "method": "post",
@@ -353,14 +353,16 @@
     },
     "toc": {
       "url": "https://www.wxsy.net/novel/%s/chapter_1.html",
-      "item": ".biqunaicc > div:nth-child(2) > div > ul > li > a"
+      "item": ".biqunaicc > div:nth-child(2) > div > ul > li > a",
+      "nextPage": ".biqunaicc > div:nth-child(2) > div > div:nth-child(2) > select > option"
     },
     "chapter": {
       "title": "h3",
-      "content": ".row-detail > div > div",
+      "content": ".row-detail > div > div@java:base64.decode()",
       "paragraphTagClosed": true,
       "filterTxt": "请勿开启浏览器阅读模式，否则将导致章节内容缺失及无法阅读下一章。|\\(本章完\\)",
-      "filterTag": "h3, div, p[style=font-size:12px;]"
+      "filterTag": "h3, div, p[style=font-size:12px;]",
+      "nextPage": ".row.row-detail > div > div > div:nth-child(2) > a:nth-child(4)"
     },
     "crawl": {
       "timeoutMillis": 15000,
@@ -417,8 +419,8 @@
     "id": "ranwen8",
     "name": "燃文小说网",
     "baseUrl": "https://www.ranwen8.cc/",
-    "enabled": false,
-    "comment": "默认书源；正文依赖 JS/base64 规则，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "已适配 Base64 正文；站点限流时可改用内置浏览器在线阅读",
     "search": {
       "url": "https://www.ranwen8.cc/search.html",
       "method": "post",
@@ -439,14 +441,16 @@
     },
     "toc": {
       "url": "https://www.ranwen8.cc/book/%s/index_1.html",
-      "item": "body > div:nth-child(4) > div > ul > li > a"
+      "item": "body > div:nth-child(4) > div > ul > li > a",
+      "nextPage": "body > div:nth-child(4) > div > div > select > option"
     },
     "chapter": {
       "title": "#jsnc_l > div > h1",
-      "content": "#htmlContent",
+      "content": "#htmlContent@java:base64.decode()",
       "paragraphTagClosed": false,
       "filterTxt": "首发：~小÷说◎网】，♂小÷说◎网】，",
-      "filterTag": "script"
+      "filterTag": "",
+      "nextPage": "#link-next"
     },
     "crawl": {
       "timeoutMillis": 15000,
@@ -536,8 +540,8 @@
     "id": "laoyaoxs",
     "name": "老幺小说网",
     "baseUrl": "https://www.laoyaoxs.org/",
-    "enabled": false,
-    "comment": "限流书源；正文段落乱序依赖 JS 重排，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "限流书源；已按 data-id 还原正文段落顺序",
     "search": {
       "url": "https://www.laoyaoxs.org/search.php?key=%s",
       "method": "get",
@@ -556,7 +560,7 @@
     },
     "chapter": {
       "title": "#chapter-name > h2",
-      "content": "#txt",
+      "content": "#txt@js:data-id",
       "paragraphTagClosed": true,
       "filterTxt": "",
       "filterTag": ""
@@ -719,8 +723,8 @@
     "name": "69书吧",
     "baseUrl": "https://www.69shuba.com/",
     "needProxy": true,
-    "enabled": false,
-    "comment": "需要代理和 CF 绕过，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "需要代理且有 Cloudflare；搜索关闭，可在内置浏览器通过验证后在线阅读",
     "search": {
       "disabled": true,
       "url": "https://69shuba.com/modules/article/search.php",
@@ -761,10 +765,14 @@
     "name": "全本小说网",
     "baseUrl": "https://quanben5.com/",
     "needProxy": true,
-    "enabled": false,
-    "comment": "需要代理且搜索参数依赖 JS 加密，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "需要代理；已适配搜索参数 b 的动态加密与 JSONP 结果",
     "search": {
-      "disabled": true
+      "url": "@js:quanben5-search",
+      "method": "get",
+      "result": ".pic_txt_list",
+      "bookName": "h3 > a",
+      "author": "p.info > span"
     },
     "book": {
       "url": "https://quanben5.com/n/(.*?)/",
@@ -782,7 +790,7 @@
       "content": "#content",
       "paragraphTagClosed": true,
       "filterTxt": "\\(本章完\\)",
-      "filterTag": "script"
+      "filterTag": ""
     },
     "crawl": {
       "timeoutMillis": 18000,
@@ -833,8 +841,8 @@
     "name": "101看书",
     "baseUrl": "https://101kks.com/",
     "needProxy": true,
-    "enabled": false,
-    "comment": "需要代理和 CF 绕过，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "需要代理，目录 AJAX 可能触发 Cloudflare；可在内置浏览器通过验证后在线阅读",
     "search": {
       "url": "https://101kks.com/search/%s/1.html",
       "method": "get",
@@ -868,8 +876,8 @@
     "id": "xhytd",
     "name": "黄易天地",
     "baseUrl": "http://www.xhytd.com/",
-    "enabled": false,
-    "comment": "Cloudflare 保护且搜索关闭，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "搜索关闭；非大陆 IP 可能较慢，可通过内置浏览器在线阅读",
     "search": {
       "disabled": true,
       "url": "http://www.xhytd.com/search.html?name=%s",
@@ -900,8 +908,8 @@
     "id": "dushu96",
     "name": "96读书",
     "baseUrl": "https://www.96dushu.com/",
-    "enabled": false,
-    "comment": "Cloudflare 保护且章节 JS 加密，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "搜索关闭；已适配 Base64 正文和分页脚本，受保护时使用内置浏览器",
     "search": {
       "disabled": true,
       "url": "https://www.96dushu.com/modules/article/search.php",
@@ -920,10 +928,10 @@
     },
     "chapter": {
       "title": "#mlfy_main_text > h1",
-      "content": "#content",
+      "content": "#content@java:base64.decode()",
       "paragraphTagClosed": true,
       "filterTxt": "\\((继续下一页|本章完)\\)",
-      "filterTag": "script",
+      "filterTag": "",
       "nextPage": "#pb_next",
       "nextPageInJs": "body > script:nth-child(17)@js:r=r.match(/nextpage = \\\"(.*?)\\\"/)[1]"
     },
@@ -939,8 +947,8 @@
     "id": "dongtanxs",
     "name": "东滩小说",
     "baseUrl": "http://www.dongtanxs.com/",
-    "enabled": false,
-    "comment": "Cloudflare 分类书源，当前 Android MVP 暂未启用",
+    "enabled": true,
+    "comment": "Cloudflare 书源；普通请求失败时可在内置浏览器通过验证后在线阅读",
     "search": {
       "url": "http://www.dongtanxs.com/s.php?ie=utf-8&q=%s",
       "method": "get",
