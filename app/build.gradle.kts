@@ -14,8 +14,8 @@ android {
         applicationId = "com.wjnocal.novelreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3200
-        versionName = "3.200"
+        versionCode = 3201
+        versionName = "3.201"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

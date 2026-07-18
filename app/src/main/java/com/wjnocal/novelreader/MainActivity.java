@@ -31,6 +31,7 @@ import android.widget.NumberPicker;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.webkit.WebView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -971,6 +972,10 @@ public class MainActivity extends AppCompatActivity {
             clearReadingStats();
             dialog.dismiss();
         }));
+        content.addView(createDialogOption("清除浏览器缓存", v -> {
+            dialog.dismiss();
+            clearBrowserCache();
+        }));
         content.addView(createDialogOption("清除历史头像图片", v -> {
             UserProfile.clearAvatar(this);
             updateHomeAvatar();
@@ -1013,6 +1018,17 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "已清除阅读统计", Toast.LENGTH_SHORT).show();
             });
         });
+    }
+
+    private void clearBrowserCache() {
+        try {
+            WebView cacheCleaner = new WebView(this);
+            cacheCleaner.clearCache(true);
+            cacheCleaner.destroy();
+            Toast.makeText(this, "已清除浏览器缓存，网站登录状态已保留", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "清除浏览器缓存失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showAboutSoftwareDialog() {
