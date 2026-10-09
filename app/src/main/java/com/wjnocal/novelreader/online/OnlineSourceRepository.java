@@ -98,7 +98,7 @@ public class OnlineSourceRepository {
         }
     }
 
-    private OnlineBookSource parseSource(JSONObject object) {
+    static OnlineBookSource parseSource(JSONObject object) {
         OnlineBookSource source = new OnlineBookSource();
         source.id = object.optString("id");
         source.name = object.optString("name");
@@ -121,6 +121,8 @@ public class OnlineSourceRepository {
             source.search.lastUpdateTime = search.optString("lastUpdateTime");
             source.search.status = search.optString("status");
             source.search.nextPage = search.optString("nextPage");
+            source.search.cookies = search.optString("cookies");
+            source.search.minIntervalMillis = search.optInt("minIntervalMillis", 0);
         }
 
         JSONObject book = object.optJSONObject("book");

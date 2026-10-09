@@ -599,6 +599,7 @@ public class SyncRepository {
         for (int i = 0; i < localBooks.size(); i++) {
             cancellation.throwIfCancelled();
             BookEntity book = localBooks.get(i);
+            if (com.wjnocal.novelreader.online.OnlineDownloadState.isIncomplete(book)) continue;
             ensureBookPayload(client, book, cancellation);
             books.put(bookJson(book));
             progress(listener, "准备书籍 " + (i + 1) + "/" + localBooks.size(), 56 + Math.min(26, (i + 1) * 26 / Math.max(1, localBooks.size())));

@@ -67,6 +67,7 @@ import androidx.core.view.ViewCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.room.InvalidationTracker;
 
 import com.wjnocal.novelreader.R;
 import com.wjnocal.novelreader.OnboardingManager;
@@ -86,6 +87,7 @@ import com.wjnocal.novelreader.parser.TxtParser;
 import com.wjnocal.novelreader.online.OnlineBookSource;
 import com.wjnocal.novelreader.online.OnlinePageExtractor;
 import com.wjnocal.novelreader.online.OnlineSourceRepository;
+import com.wjnocal.novelreader.online.OnlineDownloadService;
 
 import org.json.JSONObject;
 
@@ -243,6 +245,14 @@ public class ReaderActivity extends AppCompatActivity {
     private long readingSessionStartMillis = 0L;
     private int drawerNormalTextColor = 0xFF222222;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private final Runnable refreshDownloadedChaptersRunnable = this::refreshDownloadedChapters;
+    private final InvalidationTracker.Observer downloadedChaptersObserver = new InvalidationTracker.Observer("chapters") {
+        @Override
+        public void onInvalidated(Set<String> tables) {
+            statusHandler.removeCallbacks(refreshDownloadedChaptersRunnable);
+            statusHandler.postDelayed(refreshDownloadedChaptersRunnable, 200);
+        }
+    };
     private final Runnable statusRunnable = new Runnable() {
         @Override
         public void run() {
@@ -285,6 +295,7 @@ public class ReaderActivity extends AppCompatActivity {
         onlineCurrentUrl = getIntent().getStringExtra(EXTRA_ONLINE_URL);
         onlineCurrentUrl = onlineCurrentUrl == null ? "" : onlineCurrentUrl.trim();
         onlineMode = !onlineCurrentUrl.isEmpty();
+        if (!onlineMode) database.getInvalidationTracker().addObserver(downloadedChaptersObserver);
 
         bindViews();
         setupSystemBars();
@@ -313,6 +324,7 @@ public class ReaderActivity extends AppCompatActivity {
         updateReaderStatus();
         SyncRepository.requestAutomatic(this);
         statusHandler.postDelayed(statusRunnable, 60000);
+        refreshDownloadedChapters();
     }
 
     @Override
@@ -336,6 +348,8 @@ public class ReaderActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        database.getInvalidationTracker().removeObserver(downloadedChaptersObserver);
+        statusHandler.removeCallbacks(refreshDownloadedChaptersRunnable);
         statusHandler.removeCallbacks(statusRunnable);
         if (onlineWebView != null) {
             onlineWebView.stopLoading();
@@ -695,7 +709,37 @@ public class ReaderActivity extends AppCompatActivity {
                 refreshDrawerLists();
                 int chapterIndex = Math.max(0, Math.min(book.currentChapterIndex, chapters.size() - 1));
                 openChapter(chapterIndex, book.scrollY, book.currentPageStartOffset);
+                refreshDownloadedChapters();
                 contentView.postDelayed(this::maybeShowReaderGuide, 500L);
+            });
+        });
+    }
+
+    private boolean hasPendingDownloadChapters() {
+        return book != null && book.fileType != null && book.fileType.startsWith("online-")
+                && chapters.size() < book.totalChapters;
+    }
+
+    private void showPendingDownloadMessage() {
+        String message = OnlineDownloadService.isDownloading(bookId)
+                ? "下一章还在下载，请稍候再翻页"
+                : "后续章节尚未下载，请到在线搜书选择原书源继续下载";
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        refreshDownloadedChapters();
+    }
+
+    private void refreshDownloadedChapters() {
+        if (onlineMode || book == null || book.fileType == null || !book.fileType.startsWith("online-")
+                || isDestroyed() || executor.isShutdown()) return;
+        executor.execute(() -> {
+            List<ChapterEntity> available = database.chapterDao().getForBook(bookId);
+            runOnUiThread(() -> {
+                if (isDestroyed() || available.size() <= chapters.size()) return;
+                chapters = available;
+                // Updating the catalog must not reload the open chapter or move the reading position.
+                chaptersAdapter.submitList(chapters, book.currentChapterIndex);
+                nextButton.setEnabled(book.currentChapterIndex < Math.max(chapters.size(), book.totalChapters) - 1);
+                updateNovelProgress();
             });
         });
     }
@@ -875,6 +919,7 @@ public class ReaderActivity extends AppCompatActivity {
     private void openChapter(int index, int targetScrollY, int targetPageStartOffset, int direction) {
         if (index < 0 || index >= chapters.size()) {
             pageAnimating = false;
+            if (index >= chapters.size() && hasPendingDownloadChapters()) showPendingDownloadMessage();
             return;
         }
         clearTextSelection();
@@ -891,7 +936,7 @@ public class ReaderActivity extends AppCompatActivity {
                     titleView.setText(chapter.title);
                     buildCurrentDisplayText(chapter.title, content);
                     previousButton.setEnabled(index > 0);
-                    nextButton.setEnabled(index < chapters.size() - 1);
+                    nextButton.setEnabled(index < chapters.size() - 1 || hasPendingDownloadChapters());
                     if (isPagedMode()) {
                         renderPagedChapter(targetPageStartOffset, direction);
                     } else {
@@ -1856,7 +1901,8 @@ public class ReaderActivity extends AppCompatActivity {
             pageAnimating = true;
             openChapter(book.currentChapterIndex + 1, 0, 0, -1);
         } else {
-            markBookFinished();
+            if (hasPendingDownloadChapters()) showPendingDownloadMessage();
+            else markBookFinished();
         }
     }
 
@@ -1864,10 +1910,14 @@ public class ReaderActivity extends AppCompatActivity {
         if (onlineMode || book == null || book.finishedAt > 0) {
             return;
         }
+        if (hasPendingDownloadChapters()) {
+            showPendingDownloadMessage();
+            return;
+        }
         book.finishedAt = System.currentTimeMillis();
-        BookEntity snapshot = book;
+        long finishedAt = book.finishedAt;
         executor.execute(() -> {
-            database.bookDao().update(snapshot);
+            database.bookDao().markFinished(bookId, finishedAt);
             int noteCount = database.noteDao().countForBook(bookId);
             int bookmarkCount = database.bookmarkDao().countForBook(bookId);
             runOnUiThread(() -> showFinishedSummaryDialog(noteCount, bookmarkCount));
@@ -2396,9 +2446,13 @@ public class ReaderActivity extends AppCompatActivity {
         }
         book.updatedAt = System.currentTimeMillis();
         book.syncUpdatedAt = book.updatedAt;
-        BookEntity snapshot = book;
+        int chapterIndex = book.currentChapterIndex;
+        int scrollY = book.scrollY;
+        int pageIndex = book.currentPageIndex;
+        int pageStartOffset = book.currentPageStartOffset;
+        long updatedAt = book.updatedAt;
         executor.execute(() -> {
-            database.bookDao().update(snapshot);
+            database.bookDao().updateReadingProgress(bookId, chapterIndex, scrollY, pageIndex, pageStartOffset, updatedAt);
             SyncRepository.requestAutomatic(this);
         });
     }
@@ -3090,7 +3144,7 @@ public class ReaderActivity extends AppCompatActivity {
         if (novelProgressBar == null || book == null || chapters.isEmpty()) {
             return;
         }
-        float progress = (book.currentChapterIndex + 1f) / (float) chapters.size();
+        float progress = (book.currentChapterIndex + 1f) / (float) Math.max(chapters.size(), book.totalChapters);
         novelProgressBar.setProgress(Math.max(0, Math.min(10000, Math.round(progress * 10000f))));
     }
 

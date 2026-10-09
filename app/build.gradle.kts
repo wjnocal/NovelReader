@@ -14,8 +14,8 @@ android {
         applicationId = "com.wjnocal.novelreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3201
-        versionName = "3.201"
+        versionCode = 3300
+        versionName = "3.300"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -46,6 +46,13 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.okhttp)
     testImplementation(libs.junit)
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.ext.junit)
+}
+
+tasks.withType<Test>().configureEach {
+    systemProperty("novelreader.liveProbe", providers.gradleProperty("liveProbe").orElse("false").get())
+    systemProperty("novelreader.probeSources", providers.gradleProperty("probeSources").orElse("shuhaige,biquge365,ranwen8,laoyaoxs").get())
 }

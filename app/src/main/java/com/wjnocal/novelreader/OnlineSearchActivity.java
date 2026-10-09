@@ -87,6 +87,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
     private int checkedFormatId = View.NO_ID;
     private Dialog currentDownloadDialog;
     private TextView currentDownloadProgress;
+    private TextView currentDownloadReadButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -108,18 +109,23 @@ public class OnlineSearchActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onBookAvailable(long bookId) {
+                runOnUiThread(() -> showDownloadReadable(bookId));
+            }
+
+            @Override
             public void onDownloadFinished(long bookId) {
                 runOnUiThread(() -> showDownloadFinished(bookId));
             }
 
             @Override
             public void onDownloadCancelled() {
-                runOnUiThread(() -> showDownloadStopped("下载已取消"));
+                runOnUiThread(() -> showDownloadStopped("下载已取消" + retainedChaptersMessage()));
             }
 
             @Override
             public void onDownloadFailed(String message) {
-                runOnUiThread(() -> showDownloadStopped("下载失败：" + message));
+                runOnUiThread(() -> showDownloadStopped("下载失败：" + message + retainedChaptersMessage()));
             }
         });
     }
@@ -582,17 +588,26 @@ public class OnlineSearchActivity extends AppCompatActivity {
 
     private void showVersionDialog(ResultGroup group) {
         Dialog dialog = plainDialog();
-        LinearLayout content = dialogContent();
+        LinearLayout content = dialogContent(0.85f);
         content.addView(dialogTitle(group.title));
+        ScrollView versionScroll = new ScrollView(this);
+        versionScroll.setVerticalScrollBarEnabled(true);
+        LinearLayout versions = new LinearLayout(this);
+        versions.setOrientation(LinearLayout.VERTICAL);
         for (OnlineBookResult version : group.versions) {
             TextView row = resultRow(version.sourceName + "\n" + version.displayAuthor() + " · " + version.displayLatest());
             row.setOnClickListener(v -> {
                 dialog.dismiss();
                 startResultDownload(version);
             });
-            content.addView(row);
-            content.addView(divider());
+            versions.addView(row);
+            versions.addView(divider());
         }
+        versionScroll.addView(versions, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Only the list shrinks when the dialog reaches its height limit.
+        content.addView(versionScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         content.addView(textButton("关闭", v -> dialog.dismiss()));
         dialog.setContentView(content);
         showDialog(dialog);
@@ -665,6 +680,15 @@ public class OnlineSearchActivity extends AppCompatActivity {
         TextView progressText = messageText(message);
         progressText.setId(View.generateViewId());
         content.addView(progressText);
+        TextView readButton = textButton("立即阅读（后续章节继续下载）", v -> {
+            long bookId = OnlineDownloadService.readableBookId();
+            if (bookId > 0) {
+                dialog.dismiss();
+                startActivity(ReaderActivity.createIntent(this, bookId));
+            }
+        });
+        readButton.setVisibility(View.GONE);
+        content.addView(readButton);
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(android.view.Gravity.END);
         actions.addView(textButton("后台下载", v -> {
@@ -681,12 +705,23 @@ public class OnlineSearchActivity extends AppCompatActivity {
             if (currentDownloadDialog == dialog) {
                 currentDownloadDialog = null;
                 currentDownloadProgress = null;
+                currentDownloadReadButton = null;
             }
         });
         showDialog(dialog);
         currentDownloadDialog = dialog;
         currentDownloadProgress = progressText;
+        currentDownloadReadButton = readButton;
         return dialog;
+    }
+
+    private String retainedChaptersMessage() {
+        return OnlineDownloadService.readableBookId() > 0 ? "，已下载章节保留在书架，可选择原书源继续下载" : "";
+    }
+
+    private void showDownloadReadable(long bookId) {
+        if (currentDownloadReadButton != null) currentDownloadReadButton.setVisibility(View.VISIBLE);
+        if (currentDownloadDialog == null) updateDownloadProgress(OnlineDownloadService.currentMessage());
     }
 
     private void finishDownload(Dialog dialog, long bookId) {
@@ -712,7 +747,10 @@ public class OnlineSearchActivity extends AppCompatActivity {
             currentDownloadProgress.setText(message);
         } else if (OnlineDownloadService.isRunning()) {
             progressText.setVisibility(View.VISIBLE);
-            progressText.setText("后台下载：" + message);
+            long bookId = OnlineDownloadService.readableBookId();
+            progressText.setText("后台下载：" + message + (bookId > 0 ? "\n已可阅读，点击这里打开" : ""));
+            progressText.setOnClickListener(bookId > 0
+                    ? v -> startActivity(ReaderActivity.createIntent(this, bookId)) : null);
         }
     }
 
@@ -721,6 +759,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
         Dialog dialog = currentDownloadDialog;
         currentDownloadDialog = null;
         currentDownloadProgress = null;
+        currentDownloadReadButton = null;
         if (dialog != null) {
             finishDownload(dialog, bookId);
         } else {
@@ -733,6 +772,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
         Dialog dialog = currentDownloadDialog;
         currentDownloadDialog = null;
         currentDownloadProgress = null;
+        currentDownloadReadButton = null;
         if (dialog != null) {
             dialog.dismiss();
         }
@@ -740,6 +780,7 @@ public class OnlineSearchActivity extends AppCompatActivity {
     }
 
     private void setBusy(boolean busy, String message) {
+        progressText.setOnClickListener(null);
         searchButton.setEnabled(!busy);
         searchButton.setAlpha(busy ? 0.55f : 1f);
         searchProgress.setVisibility(busy ? View.VISIBLE : View.GONE);
@@ -850,7 +891,24 @@ public class OnlineSearchActivity extends AppCompatActivity {
     }
 
     private LinearLayout dialogContent() {
-        LinearLayout content = new LinearLayout(this);
+        return dialogContent(1f);
+    }
+
+    private LinearLayout dialogContent(float maxHeightFraction) {
+        LinearLayout content = new LinearLayout(this) {
+            @Override
+            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                if (maxHeightFraction >= 1f) {
+                    super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                    return;
+                }
+                int maxHeight = Math.round(getResources().getDisplayMetrics().heightPixels * maxHeightFraction);
+                if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+                    maxHeight = Math.min(maxHeight, MeasureSpec.getSize(heightMeasureSpec));
+                }
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST));
+            }
+        };
         content.setOrientation(LinearLayout.VERTICAL);
         content.setBackground(roundedBackground(COLOR_SURFACE_STRONG, 16, 0, 0));
         int padding = dpToPx(20);

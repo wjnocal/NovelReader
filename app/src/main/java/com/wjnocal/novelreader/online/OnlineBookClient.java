@@ -1,21 +1,23 @@
 package com.wjnocal.novelreader.online;
 
 import android.content.Context;
-import android.util.Base64;
 
 import com.wjnocal.novelreader.data.AppDatabase;
 import com.wjnocal.novelreader.data.BookEntity;
 import com.wjnocal.novelreader.data.ChapterEntity;
 
-import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.BufferedWriter;
+import java.io.OutputStreamWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.BufferedOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.util.UUID;
@@ -31,15 +33,12 @@ import java.util.Random;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.Collections;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
+import okhttp3.FormBody;
+import okio.ByteString;
 
 public class OnlineBookClient {
-    private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36";
     public static final String FORMAT_TXT = "txt";
     public static final String FORMAT_EPUB = "epub";
 
@@ -47,11 +46,21 @@ public class OnlineBookClient {
     private final AppDatabase database;
     private final OnlineSourceRepository sourceRepository;
     private final Random random = new Random();
+    private final OnlineHttpClient http;
 
     public OnlineBookClient(Context context) {
         this.context = context.getApplicationContext();
         this.database = AppDatabase.getInstance(context);
         this.sourceRepository = new OnlineSourceRepository(context);
+        this.http = new OnlineHttpClient();
+    }
+
+    // Pure parser/transport test seam; library operations use the Context constructor.
+    OnlineBookClient(OnlineHttpClient http) {
+        this.context = null;
+        this.database = null;
+        this.sourceRepository = null;
+        this.http = http;
     }
 
     public List<OnlineBookResult> search(String keyword) throws Exception {
@@ -70,13 +79,19 @@ public class OnlineBookClient {
                 sources.add(source);
             }
         }
-        int completed = 0;
-        for (OnlineBookSource source : sources) {
-            notifySearchProgress(progress, "正在搜索：" + source.name, completed, sources.size());
-            allResults.addAll(searchSource(source, cleanKeyword));
-            completed++;
-            notifySearchProgress(progress, "已完成：" + source.name, completed, sources.size());
-        }
+        List<List<OnlineBookResult>> bySource = new ArrayList<>();
+        for (int i = 0; i < sources.size(); i++) bySource.add(null);
+        AtomicInteger completed = new AtomicInteger();
+        OnlineWorkQueue.run(sources.size(), 4, null, (index, token) -> {
+            OnlineBookSource source = sources.get(index);
+            List<OnlineBookResult> found = searchSource(source, cleanKeyword, token);
+            synchronized (bySource) {
+                bySource.set(index, found);
+                notifySearchProgress(progress, "已完成：" + source.name, completed.incrementAndGet(), sources.size());
+            }
+        });
+        // Stable source ordering regardless of network completion order.
+        for (List<OnlineBookResult> found : bySource) allResults.addAll(found);
         return allResults;
     }
 
@@ -121,139 +136,168 @@ public class OnlineBookClient {
     private long downloadToLibrary(OnlineBookSource source, OnlineBookResult result, String format, OnlineDownloadProgress progress, OnlineDownloadCancelToken cancelToken) throws Exception {
         throwIfCancelled(cancelToken);
         notifyProgress(progress, "正在读取详情：《" + result.bookName + "》");
-        OnlineBookInfo bookInfo = parseBookInfo(source, result);
+        Document detail = http.get(result.url, source, cancelToken);
+        OnlineBookInfo bookInfo = parseBookInfo(source, result, detail);
         throwIfCancelled(cancelToken);
-        if (database.bookDao().getByTitle(bookInfo.title) != null) {
+        BookEntity existing = database.bookDao().getByTitle(bookInfo.title);
+        if (existing != null && !OnlineDownloadState.isIncomplete(existing)) {
             throw new IllegalStateException("书架里已存在《" + bookInfo.title + "》");
         }
 
         notifyProgress(progress, "正在读取目录...");
-        List<OnlineChapterRef> toc = parseToc(source, result.url);
+        List<OnlineChapterRef> toc = parseToc(source, result.url, detail, cancelToken);
         throwIfCancelled(cancelToken);
         if (toc.isEmpty()) {
             throw new IllegalStateException("目录为空，无法下载");
         }
 
-        File bookDir = new File(context.getFilesDir(), "books/online_" + System.currentTimeMillis());
+        String signature = OnlineDownloadState.signature(source.id, result.url, format, toc);
+        if (existing != null && !OnlineDownloadState.canResume(existing, signature)) {
+            throw new IllegalStateException("书架已有同名未完成下载，请选择原来的书源、下载格式和目录继续下载");
+        }
+        File bookDir = existing == null
+                ? new File(context.getFilesDir(), "books/online_" + UUID.randomUUID())
+                : new File(existing.storageDirPath);
         ensureDir(bookDir);
-        File originalFile = new File(bookDir, safeFileName(bookInfo.title) + "." + format);
+        File originalFile = existing == null
+                ? new File(bookDir, safeFileName(bookInfo.title) + "." + format)
+                : new File(existing.originalFilePath);
 
         File chaptersDir = new File(bookDir, "chapters");
         ensureDir(chaptersDir);
-        long bookId = -1L;
-        List<String> downloadedContents = new ArrayList<>();
+        final long[] bookId = {existing == null ? -1L : existing.id};
+        OnlineChapterCache cache = new OnlineChapterCache(new File(context.getCacheDir(), "online_chapters"));
         try {
             long now = System.currentTimeMillis();
-            BookEntity book = new BookEntity();
-            book.title = bookInfo.title;
-            book.author = bookInfo.author;
-            book.fileType = "online-" + format;
-            book.category = OnlineBookResult.clean(bookInfo.category).isEmpty() ? "未分类" : bookInfo.category;
-            book.description = bookInfo.intro;
-            book.originalFilePath = originalFile.getAbsolutePath();
-            book.storageDirPath = bookDir.getAbsolutePath();
-            book.totalChapters = toc.size();
-            book.currentChapterIndex = 0;
-            book.scrollY = 0;
-            book.createdAt = now;
-            book.updatedAt = now;
-            book.syncId = UUID.randomUUID().toString();
-            book.syncUpdatedAt = now;
-            bookId = database.bookDao().insert(book);
-
-            List<String> downloaded = downloadChapterContents(source, toc, progress, cancelToken);
-            List<ChapterEntity> chapters = new ArrayList<>();
-            for (int i = 0; i < toc.size(); i++) {
-                throwIfCancelled(cancelToken);
-                OnlineChapterRef ref = toc.get(i);
-                String content = downloaded.get(i);
-                downloadedContents.add(content);
-                File chapterFile = new File(chaptersDir, String.format(Locale.US, "%04d.txt", i));
-                writeText(chapterFile, content);
-
-                ChapterEntity chapter = new ChapterEntity();
-                chapter.bookId = bookId;
-                chapter.chapterIndex = i;
-                chapter.title = ref.title;
-                chapter.contentPath = chapterFile.getAbsolutePath();
-                chapters.add(chapter);
+            BookEntity book = existing == null ? new BookEntity() : existing;
+            if (existing == null) {
+                book.title = bookInfo.title;
+                book.author = bookInfo.author;
+                book.fileType = "online-" + format;
+                book.category = OnlineBookResult.clean(bookInfo.category).isEmpty() ? "未分类" : bookInfo.category;
+                book.description = bookInfo.intro;
+                book.originalFilePath = originalFile.getAbsolutePath();
+                book.storageDirPath = bookDir.getAbsolutePath();
+                book.totalChapters = toc.size();
+                book.currentChapterIndex = 0;
+                book.scrollY = 0;
+                book.createdAt = now;
+                book.updatedAt = now;
+                book.syncId = UUID.randomUUID().toString();
+                book.syncUpdatedAt = now;
+                OnlineDownloadState.begin(book, signature);
             }
-            throwIfCancelled(cancelToken);
-            notifyProgress(progress, "正在生成 " + format.toUpperCase(Locale.US) + " 文件...");
-            if (FORMAT_EPUB.equals(format)) {
-                writeEpub(originalFile, bookInfo, toc, downloadedContents);
-            } else {
-                writeTxt(originalFile, bookInfo, source, result.url, toc, downloadedContents);
-            }
-            throwIfCancelled(cancelToken);
-            database.chapterDao().insertAll(chapters);
-            notifyProgress(progress, "下载完成：《" + bookInfo.title + "》");
-            return bookId;
-        } catch (Exception e) {
-            if (bookId > 0) {
-                BookEntity inserted = database.bookDao().getById(bookId);
-                if (inserted != null) {
-                    database.bookDao().delete(inserted);
+            List<ChapterEntity> saved = existing == null ? new ArrayList<>() : database.chapterDao().getForBook(bookId[0]);
+            for (int i = 0; i < saved.size(); i++) {
+                if (saved.get(i).chapterIndex != i || !new File(saved.get(i).contentPath).isFile()) {
+                    throw new IllegalStateException("已下载章节文件缺失，请删除这本书后重新下载");
                 }
             }
-            deleteRecursively(bookDir);
+            if (!saved.isEmpty() && progress != null) progress.onBookAvailable(bookId[0]);
+            OnlineChapterPublisher publisher = new OnlineChapterPublisher(toc.size(), saved.size(), (from, to) -> {
+                throwIfCancelled(cancelToken);
+                List<ChapterEntity> added = new ArrayList<>();
+                boolean firstPublication = bookId[0] <= 0;
+                long committedId = bookId[0];
+                database.beginTransaction();
+                try {
+                    if (firstPublication) committedId = database.bookDao().insert(book);
+                    for (int i = from; i < to; i++) {
+                        ChapterEntity chapter = new ChapterEntity();
+                        chapter.bookId = committedId;
+                        chapter.chapterIndex = i;
+                        chapter.title = toc.get(i).title;
+                        chapter.contentPath = new File(chaptersDir, String.format(Locale.US, "%04d.txt", i)).getAbsolutePath();
+                        added.add(chapter);
+                    }
+                    database.chapterDao().insertAll(added);
+                    database.setTransactionSuccessful();
+                } finally { database.endTransaction(); }
+                bookId[0] = committedId;
+                if (firstPublication && progress != null) progress.onBookAvailable(committedId);
+            });
+            List<File> downloaded = downloadChapterContents(source, toc, chaptersDir, cache, progress,
+                    cancelToken, saved.size(), publisher::completed);
+            throwIfCancelled(cancelToken);
+            notifyProgress(progress, "正在生成 " + format.toUpperCase(Locale.US) + " 文件...");
+            File pendingExport = new File(bookDir, originalFile.getName() + ".part");
+            if (FORMAT_EPUB.equals(format)) {
+                writeEpub(pendingExport, bookInfo, toc, downloaded, cancelToken);
+            } else {
+                writeTxt(pendingExport, bookInfo, source, result.url, toc, downloaded, cancelToken);
+            }
+            throwIfCancelled(cancelToken);
+            if (!pendingExport.renameTo(originalFile)) throw new java.io.IOException("无法保存下载文件");
+            if (database.bookDao().getById(bookId[0]) == null) throw new CancellationException("书籍已删除");
+            OnlineDownloadState.complete(book);
+            notifyProgress(progress, "下载完成：《" + bookInfo.title + "》");
+            return bookId[0];
+        } catch (Exception e) {
+            // Published chapters remain readable after cancellation or a network failure.
+            if (bookId[0] <= 0 || database.bookDao().getById(bookId[0]) == null) {
+                deleteRecursively(bookDir);
+            }
             throw e;
-        }
-    }
-
-    private List<String> downloadChapterContents(OnlineBookSource source, List<OnlineChapterRef> toc, OnlineDownloadProgress progress, OnlineDownloadCancelToken cancelToken) throws Exception {
-        int concurrency = Math.max(1, Math.min(source.crawl.concurrency, toc.size()));
-        if (concurrency == 1) {
-            List<String> contents = new ArrayList<>();
-            for (int i = 0; i < toc.size(); i++) {
-                throwIfCancelled(cancelToken);
-                OnlineChapterRef ref = toc.get(i);
-                notifyProgress(progress, "正在下载 " + (i + 1) + "/" + toc.size() + "：" + ref.title);
-                contents.add(downloadChapterContent(source, ref, cancelToken));
-            }
-            return contents;
-        }
-
-        notifyProgress(progress, "并发下载中：0/" + toc.size() + "，线程 " + concurrency);
-        List<String> contents = new ArrayList<>(Collections.nCopies(toc.size(), ""));
-        AtomicInteger completed = new AtomicInteger(0);
-        ExecutorService pool = Executors.newFixedThreadPool(concurrency);
-        List<Future<ChapterDownload>> futures = new ArrayList<>();
-        try {
-            for (int i = 0; i < toc.size(); i++) {
-                int index = i;
-                OnlineChapterRef ref = toc.get(i);
-                futures.add(pool.submit(() -> {
-                    throwIfCancelled(cancelToken);
-                    String content = downloadChapterContent(source, ref, cancelToken);
-                    int done = completed.incrementAndGet();
-                    notifyProgress(progress, "并发下载中：" + done + "/" + toc.size() + "：" + ref.title);
-                    return new ChapterDownload(index, content);
-                }));
-            }
-            for (Future<ChapterDownload> future : futures) {
-                throwIfCancelled(cancelToken);
-                ChapterDownload download = future.get();
-                contents.set(download.index, download.content);
-            }
-            return contents;
         } finally {
-            pool.shutdownNow();
+            cache.prune();
         }
     }
 
-    private List<OnlineBookResult> searchSource(OnlineBookSource source, String keyword) {
+    List<File> downloadChapterContents(OnlineBookSource source, List<OnlineChapterRef> toc, File directory,
+                                      OnlineChapterCache cache, OnlineDownloadProgress progress,
+                                      OnlineDownloadCancelToken cancelToken) throws Exception {
+        return downloadChapterContents(source, toc, directory, cache, progress, cancelToken, 0, null);
+    }
+
+    interface ChapterReady { void onReady(int index) throws Exception; }
+
+    List<File> downloadChapterContents(OnlineBookSource source, List<OnlineChapterRef> toc, File directory,
+                                      OnlineChapterCache cache, OnlineDownloadProgress progress,
+                                      OnlineDownloadCancelToken cancelToken, int alreadyPublished,
+                                      ChapterReady ready) throws Exception {
+        int concurrency = Math.max(1, Math.min(8, Math.min(source.crawl.concurrency, toc.size())));
+        notifyProgress(progress, "并发下载中：" + alreadyPublished + "/" + toc.size() + "，线程 " + concurrency);
+        List<File> files = new ArrayList<>();
+        for (int i = 0; i < toc.size(); i++) files.add(new File(directory, String.format(Locale.US, "%04d.txt", i)));
+        AtomicInteger completed = new AtomicInteger(alreadyPublished);
+        Set<String> chapterUrls = new HashSet<>();
+        for (OnlineChapterRef ref : toc) chapterUrls.add(ref.url);
+        OnlineWorkQueue.run(toc.size() - alreadyPublished, concurrency, cancelToken, (pendingIndex, token) -> {
+            int index = pendingIndex + alreadyPublished;
+            OnlineChapterRef ref = toc.get(index);
+            String key = OnlineChapterCache.key(source, ref.url, ref.title);
+            String content = cache.read(key);
+            if (content == null) {
+                content = downloadChapterContent(source, ref, token, chapterUrls);
+                token.throwIfCancelled();
+                cache.write(key, content);
+            }
+            token.throwIfCancelled();
+            writeText(files.get(index), content);
+            token.throwIfCancelled();
+            if (ready != null) ready.onReady(index);
+            synchronized (completed) {
+                int done = completed.incrementAndGet();
+                notifyProgress(progress, "并发下载中：" + done + "/" + toc.size() + "：" + ref.title);
+            }
+        });
+        return files;
+    }
+
+    List<OnlineBookResult> searchSource(OnlineBookSource source, String keyword, OnlineDownloadCancelToken token) {
         List<OnlineBookResult> results = new ArrayList<>();
         if (source.search.disabled || source.search.result == null || source.search.result.trim().isEmpty()) {
             return results;
         }
         try {
-            Document document = requestSearchDocument(source, keyword);
+            Document document = requestSearchDocument(source, keyword, token);
             Set<String> visitedPages = new HashSet<>();
-            List<Document> pages = new ArrayList<>();
-            pages.add(document);
-            for (int pageIndex = 0; pageIndex < pages.size(); pageIndex++) {
-                Document page = pages.get(pageIndex);
+            Set<String> seenBooks = new HashSet<>();
+            Set<String> scheduledPages = new HashSet<>();
+            List<String> pendingPages = new ArrayList<>();
+            for (int pageIndex = 0; pageIndex == 0 || pageIndex <= pendingPages.size(); pageIndex++) {
+                throwIfCancelled(token);
+                Document page = pageIndex == 0 ? document : http.search(pendingPages.get(pageIndex - 1), source, null, token);
                 String pageUrl = page.location();
                 if (!pageUrl.isEmpty() && !visitedPages.add(pageUrl)) {
                     continue;
@@ -262,7 +306,7 @@ public class OnlineBookClient {
                 for (Element element : elements) {
                     String bookName = selectValue(element, source.search.bookName, true);
                     String url = selectValue(element, source.search.bookName, false);
-                    if (bookName.isEmpty() || url.isEmpty()) {
+                    if (bookName.isEmpty() || !isHttpUrl(url) || !seenBooks.add(url)) {
                         continue;
                     }
                     OnlineBookResult result = new OnlineBookResult();
@@ -278,11 +322,14 @@ public class OnlineBookClient {
                     results.add(result);
                 }
                 for (String nextUrl : extractSearchPageUrls(page, source)) {
-                    if (!visitedPages.contains(nextUrl)) {
-                        pages.add(requestDocument(nextUrl, source));
+                    if (isHttpUrl(nextUrl) && isSameHost(pageUrl, nextUrl)
+                            && !visitedPages.contains(nextUrl) && scheduledPages.add(nextUrl) && pendingPages.size() < 100) {
+                        pendingPages.add(nextUrl);
                     }
                 }
             }
+        } catch (CancellationException cancelled) {
+            throw cancelled;
         } catch (Exception ignored) {
             // A single source failing should not prevent searching the remaining sources.
         }
@@ -306,27 +353,22 @@ public class OnlineBookClient {
         return urls;
     }
 
-    private Document requestSearchDocument(OnlineBookSource source, String keyword) throws Exception {
+    private Document requestSearchDocument(OnlineBookSource source, String keyword, OnlineDownloadCancelToken token) throws Exception {
         String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8.name());
         String url = source.search.url.startsWith("@js:")
                 ? buildDynamicSearchUrl(source, keyword)
                 : source.search.url.replace("%s", encodedKeyword);
-        Connection connection = Jsoup.connect(url)
-                .userAgent(USER_AGENT)
-                .referrer(source.baseUrl)
-                .timeout(source.crawl.timeoutMillis)
-                .ignoreHttpErrors(true)
-                .ignoreContentType(true);
+        FormBody.Builder form = new FormBody.Builder();
         if ("post".equalsIgnoreCase(source.search.method)) {
             Iterator<String> keys = source.search.data.keys();
             while (keys.hasNext()) {
                 String key = keys.next();
                 String value = source.search.data.optString(key);
-                connection.data(key, "%s".equals(value) ? keyword : value);
+                form.add(key, value.replace("%s", keyword));
             }
-            return preprocessSearchDocument(source, connection.method(Connection.Method.POST).post());
+            return http.search(url, source, form.build(), token);
         }
-        return preprocessSearchDocument(source, connection.get());
+        return http.search(url, source, null, token);
     }
 
     private String buildDynamicSearchUrl(OnlineBookSource source, String keyword) throws Exception {
@@ -348,31 +390,12 @@ public class OnlineBookClient {
                 + encoded + "&b=" + URLEncoder.encode(encrypted.toString(), StandardCharsets.UTF_8.name());
     }
 
-    private Document preprocessSearchDocument(OnlineBookSource source, Document document) {
-        if (!"quanben5".equals(source.id)) {
-            return document;
-        }
-        try {
-            String response = document.body() == null ? document.text() : document.body().text();
-            Matcher matcher = Pattern.compile("search\\((\\{.*\\})\\)\\s*;?", Pattern.DOTALL).matcher(response);
-            if (matcher.find()) {
-                String content = new JSONObject(matcher.group(1)).optString("content");
-                if (!content.trim().isEmpty()) {
-                    return Jsoup.parse(content, source.baseUrl);
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return document;
-    }
-
-    private OnlineBookInfo parseBookInfo(OnlineBookSource source, OnlineBookResult result) throws Exception {
-        Document document = requestDocument(result.url, source);
+    private OnlineBookInfo parseBookInfo(OnlineBookSource source, OnlineBookResult result, Document document) {
         OnlineBookInfo info = new OnlineBookInfo();
-        info.title = fallback(selectValue(document, source.book.bookName, true), deriveTitleFromDocument(document, result.bookName));
-        info.author = cleanAuthor(fallback(selectValue(document, source.book.author, true), result.author));
-        info.category = fallback(selectValue(document, source.book.category, true), result.category);
-        info.intro = selectValue(document, source.book.intro, true);
+        info.title = fallback(selectValue(document, source.book.bookName, true), fallback(meta(document, "og:novel:book_name"), deriveTitleFromDocument(document, result.bookName)));
+        info.author = cleanAuthor(fallback(selectValue(document, source.book.author, true), fallback(meta(document, "og:novel:author"), result.author)));
+        info.category = fallback(selectValue(document, source.book.category, true), fallback(meta(document, "og:novel:category"), result.category));
+        info.intro = fallback(selectValue(document, source.book.intro, true), meta(document, "og:description"));
         if (info.title.isEmpty()) {
             throw new IllegalStateException("详情页书名为空");
         }
@@ -390,23 +413,28 @@ public class OnlineBookClient {
         return title.replaceFirst("[_\\-—|｜].*$", "").trim();
     }
 
-    private List<OnlineChapterRef> parseToc(OnlineBookSource source, String bookUrl) throws Exception {
+    List<OnlineChapterRef> parseToc(OnlineBookSource source, String bookUrl, Document detail, OnlineDownloadCancelToken token) throws Exception {
         List<OnlineChapterRef> chapters = new ArrayList<>();
+        Set<String> chapterUrls = new HashSet<>();
         String firstTocUrl = resolveTocUrl(source, bookUrl);
         Set<String> visitedPages = new HashSet<>();
+        Set<String> scheduledPages = new HashSet<>();
         List<String> tocPages = new ArrayList<>();
         tocPages.add(firstTocUrl);
+        scheduledPages.add(firstTocUrl);
         for (int pageIndex = 0; pageIndex < tocPages.size(); pageIndex++) {
+            throwIfCancelled(token);
             String tocUrl = tocPages.get(pageIndex);
             if (!visitedPages.add(tocUrl)) {
                 continue;
             }
-            Document document = requestDocument(tocUrl, source);
+            Document document = detail != null && tocUrl.equals(bookUrl) ? detail : http.get(tocUrl, source, token);
             applyTocTransform(document, source);
             Elements elements = selectElements(document, source.toc.item);
-            appendChapterRefs(source, chapters, elements);
+            appendChapterRefs(source, chapters, chapterUrls, elements);
             for (String nextUrl : extractTocPageUrls(document, source)) {
-                if (!visitedPages.contains(nextUrl) && !tocPages.contains(nextUrl)) {
+                if (isHttpUrl(nextUrl) && isSameHost(tocUrl, nextUrl) && scheduledPages.add(nextUrl)) {
+                    if (tocPages.size() >= 1000) throw new IllegalStateException("目录分页过多");
                     tocPages.add(nextUrl);
                 }
             }
@@ -414,14 +442,14 @@ public class OnlineBookClient {
         return chapters;
     }
 
-    private void appendChapterRefs(OnlineBookSource source, List<OnlineChapterRef> chapters, Elements elements) {
+    private void appendChapterRefs(OnlineBookSource source, List<OnlineChapterRef> chapters, Set<String> urls, Elements elements) {
         if (source.toc.desc) {
             for (int i = elements.size() - 1; i >= 0; i--) {
-                addChapterRef(chapters, elements.get(i));
+                addChapterRef(chapters, urls, elements.get(i));
             }
         } else {
             for (Element element : elements) {
-                addChapterRef(chapters, element);
+                addChapterRef(chapters, urls, element);
             }
         }
     }
@@ -470,15 +498,10 @@ public class OnlineBookClient {
         }
     }
 
-    private void addChapterRef(List<OnlineChapterRef> chapters, Element element) {
+    private void addChapterRef(List<OnlineChapterRef> chapters, Set<String> urls, Element element) {
         String title = OnlineBookResult.clean(element.text());
         String url = element.absUrl("href");
-        if (!title.isEmpty() && !url.isEmpty()) {
-            for (OnlineChapterRef existing : chapters) {
-                if (url.equals(existing.url)) {
-                    return;
-                }
-            }
+        if (!title.isEmpty() && isHttpUrl(url) && urls.add(url)) {
             OnlineChapterRef chapter = new OnlineChapterRef();
             chapter.title = title;
             chapter.url = url;
@@ -486,7 +509,12 @@ public class OnlineBookClient {
         }
     }
 
-    private String downloadChapterContent(OnlineBookSource source, OnlineChapterRef ref, OnlineDownloadCancelToken cancelToken) throws Exception {
+    String downloadChapterContent(OnlineBookSource source, OnlineChapterRef ref, OnlineDownloadCancelToken cancelToken) throws Exception {
+        return downloadChapterContent(source, ref, cancelToken, java.util.Collections.emptySet());
+    }
+
+    private String downloadChapterContent(OnlineBookSource source, OnlineChapterRef ref,
+                                         OnlineDownloadCancelToken cancelToken, Set<String> chapterUrls) throws Exception {
         Exception lastError = null;
         int attempts = Math.max(1, source.crawl.maxRetries + 1);
         for (int attempt = 0; attempt < attempts; attempt++) {
@@ -502,22 +530,26 @@ public class OnlineBookClient {
                     if (!visitedPages.add(pageUrl)) {
                         continue;
                     }
-                    sleepBetweenRequests(source);
-                    throwIfCancelled(cancelToken);
-                    Document document = requestDocument(pageUrl, source);
+                    Document document = http.get(pageUrl, source, cancelToken);
                     throwIfCancelled(cancelToken);
                     if (title.isEmpty()) {
-                        title = fallback(selectValue(document, source.chapter.title, true), ref.title);
+                        title = fallback(selectValue(document, source.chapter.title, true), ref.title)
+                                .replaceFirst("\\(\\d+/\\d+\\)$", "").trim();
                     }
+                    List<String> nextPages = extractChapterPageUrls(document, source, pageUrl, ref.url);
                     String body = extractChapterBody(document, source.chapter);
+                    if (body.isEmpty()) throw new IllegalStateException("正文为空：" + pageUrl);
+                    if (body.matches("(?s).*(访问太频繁|访问过于频繁|请\\d+秒过后刷新|error code: 1015).*")) {
+                        throw new IllegalStateException("网站限流：" + pageUrl);
+                    }
                     if (!body.isEmpty()) {
                         if (chapterBuilder.length() > 0) {
                             chapterBuilder.append("\n\n");
                         }
                         chapterBuilder.append(body);
                     }
-                    for (String nextUrl : extractChapterPageUrls(document, source, pageUrl, ref.url)) {
-                        if (!visitedPages.contains(nextUrl) && !pageUrls.contains(nextUrl)) {
+                    for (String nextUrl : nextPages) {
+                        if (!chapterUrls.contains(nextUrl) && !visitedPages.contains(nextUrl) && !pageUrls.contains(nextUrl)) {
                             pageUrls.add(nextUrl);
                         }
                     }
@@ -533,9 +565,22 @@ public class OnlineBookClient {
                 return title + "\n\n" + body;
             } catch (CancellationException e) {
                 throw e;
+            } catch (OnlineHttpClient.HttpFailure e) {
+                // HTTP retries and Retry-After were already handled by the transport.
+                throw e;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CancellationException("下载已取消");
             } catch (Exception e) {
                 lastError = e;
-                sleepBetweenRequests(source);
+                if (attempt + 1 < attempts) {
+                    long backoff = e.getMessage() != null && e.getMessage().contains("网站限流")
+                            ? 30_000 : OnlineHttpClient.retryDelay(null, attempt);
+                    for (long waited = 0; waited < backoff; waited += 100) {
+                        throwIfCancelled(cancelToken);
+                        Thread.sleep(Math.min(100, backoff - waited));
+                    }
+                }
             }
         }
         throw lastError == null ? new IllegalStateException("章节下载失败") : lastError;
@@ -580,7 +625,7 @@ public class OnlineBookClient {
     }
 
     private boolean shouldFollowChapterPage(Document document, OnlineBookSource source, String nextUrl, String nextText, String firstUrl, String currentUrl, boolean requireSameChapterShape) {
-        if (nextUrl == null || nextUrl.trim().isEmpty() || nextUrl.equals(currentUrl)) {
+        if (!isHttpUrl(nextUrl) || nextUrl.equals(currentUrl)) {
             return false;
         }
         String cleanNextText = OnlineBookResult.clean(nextText);
@@ -604,7 +649,7 @@ public class OnlineBookClient {
                 // Keep downloading if a custom regex is invalid instead of failing the whole chapter.
             }
         }
-        return !nextUrl.matches(".*[-_]\\d\\.html?")
+        return !nextUrl.matches(".*[-_]\\d+\\.html?")
                 && nextText.matches(".*(下一章|没有了|>>|书末页).*");
     }
 
@@ -747,18 +792,20 @@ public class OnlineBookClient {
         return name.replaceFirst("\\.html?$", "");
     }
 
-    private Document requestDocument(String url, OnlineBookSource source) throws Exception {
-        return Jsoup.connect(url)
-                .userAgent(USER_AGENT)
-                .referrer(source.baseUrl)
-                .timeout(source.crawl.timeoutMillis)
-                .ignoreHttpErrors(true)
-                .ignoreContentType(true)
-                .get();
+    private boolean isHttpUrl(String url) {
+        if (url == null) return false;
+        try {
+            URI uri = URI.create(url);
+            return uri.getHost() != null && ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()));
+        } catch (IllegalArgumentException ignored) { return false; }
     }
 
-    private String extractChapterBody(Document document, OnlineBookSource.ChapterRule rule) {
-        Elements elements = selectElements(document, rule.content);
+    private String meta(Document document, String property) {
+        return selectValue(document, "meta[property=\"" + property + "\"], meta[name=\"" + property + "\"]", true);
+    }
+
+    String extractChapterBody(Document document, OnlineBookSource.ChapterRule rule) {
+        Elements elements = selectElements(document, rule.content).clone();
         if (elements.isEmpty()) {
             return "";
         }
@@ -786,7 +833,9 @@ public class OnlineBookClient {
     private String transformChapterHtml(String html, OnlineBookSource.ChapterRule rule) {
         String transformed = html == null ? "" : html;
         if (transformed.contains("document.writeln") || (rule.content != null && rule.content.contains("base64.decode"))) {
-            Matcher matcher = Pattern.compile("document\\.writeln\\(qsbs\\.bb\\(['\"]([^'\"]+)['\"]\\)\\);?", Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(transformed);
+            // Replace the whole script, not only its call: text left inside a script
+            // is deliberately ignored by Jsoup and would silently disappear.
+            Matcher matcher = Pattern.compile("(?:<script[^>]*>\\s*)?document\\.writeln\\(qsbs\\.bb\\(['\"]([^'\"]+)['\"]\\)\\);?\\s*(?:</script>)?", Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(transformed);
             StringBuffer output = new StringBuffer();
             while (matcher.find()) {
                 String decoded = decodeBase64Utf8(matcher.group(1));
@@ -813,7 +862,8 @@ public class OnlineBookClient {
 
     private String decodeBase64Utf8(String encoded) {
         try {
-            return new String(Base64.decode(encoded, Base64.DEFAULT), StandardCharsets.UTF_8);
+            ByteString decoded = ByteString.decodeBase64(encoded);
+            return decoded == null ? "" : decoded.utf8();
         } catch (Exception ignored) {
             return encoded;
         }
@@ -827,14 +877,14 @@ public class OnlineBookClient {
         int hiddenFromStart = countMatches(html, "\\.section-list\\.ycxsid\\s*>\\s*li:nth-child\\(\\d+\\)\\s*\\{\\s*display\\s*:\\s*none");
         int hiddenFromEnd = countMatches(html, "\\.section-list\\.ycxsid\\s*>\\s*li:nth-last-child\\(\\d+\\)\\s*\\{\\s*display\\s*:\\s*none");
         for (Element list : document.select("ul.section-list.ycxsid")) {
-            Elements items = list.select(":scope > li");
+            Elements items = list.children();
             for (int i = 0; i < hiddenFromStart && !items.isEmpty(); i++) {
                 items.first().remove();
-                items = list.select(":scope > li");
+                items = list.children();
             }
             for (int i = 0; i < hiddenFromEnd && !items.isEmpty(); i++) {
                 items.last().remove();
-                items = list.select(":scope > li");
+                items = list.children();
             }
         }
     }
@@ -876,7 +926,9 @@ public class OnlineBookClient {
             return "";
         }
         if (query.attribute != null) {
-            return OnlineBookResult.clean(elements.first().absUrl(query.attribute));
+            String value = "href".equals(query.attribute) || "src".equals(query.attribute)
+                    ? elements.first().absUrl(query.attribute) : elements.first().attr(query.attribute);
+            return OnlineBookResult.clean(value);
         }
         if (!preferText) {
             String href = elements.first().absUrl("href");
@@ -936,12 +988,6 @@ public class OnlineBookClient {
                 .trim();
     }
 
-    private void sleepBetweenRequests(OnlineBookSource source) throws InterruptedException {
-        int min = Math.max(0, source.crawl.minIntervalMillis);
-        int max = Math.max(min + 1, source.crawl.maxIntervalMillis);
-        Thread.sleep(min + random.nextInt(max - min));
-    }
-
     private void notifyProgress(OnlineDownloadProgress progress, String message) {
         if (progress != null) {
             progress.onProgress(message);
@@ -955,30 +1001,27 @@ public class OnlineBookClient {
     }
 
     private void throwIfCancelled(OnlineDownloadCancelToken cancelToken) {
-        if (cancelToken != null) {
-            cancelToken.throwIfCancelled();
-        }
+        OnlineHttpClient.checkCancelled(cancelToken);
     }
 
     private String normalizeFormat(String format) {
         return FORMAT_EPUB.equalsIgnoreCase(format) ? FORMAT_EPUB : FORMAT_TXT;
     }
 
-    private void writeTxt(File file, OnlineBookInfo bookInfo, OnlineBookSource source, String url, List<OnlineChapterRef> toc, List<String> contents) throws Exception {
-        StringBuilder builder = new StringBuilder();
-        builder.append(bookInfo.title).append("\n");
-        builder.append(bookInfo.author).append("\n");
-        builder.append("source=").append(source.name).append("\n");
-        builder.append("url=").append(url).append("\n\n");
-        for (int i = 0; i < contents.size(); i++) {
-            builder.append(toc.get(i).title).append("\n\n");
-            builder.append(contents.get(i)).append("\n\n");
+    void writeTxt(File file, OnlineBookInfo bookInfo, OnlineBookSource source, String url, List<OnlineChapterRef> toc, List<File> contents, OnlineDownloadCancelToken token) throws Exception {
+        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8))) {
+            writer.write(bookInfo.title + "\n" + bookInfo.author + "\nsource=" + source.name + "\nurl=" + url + "\n\n");
+            for (File chapter : contents) {
+                throwIfCancelled(token);
+                // Chapter files already start with their title; do not duplicate it.
+                writer.write(readText(chapter));
+                writer.write("\n\n");
+            }
         }
-        writeText(file, builder.toString());
     }
 
-    private void writeEpub(File file, OnlineBookInfo bookInfo, List<OnlineChapterRef> toc, List<String> contents) throws Exception {
-        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(file))) {
+    void writeEpub(File file, OnlineBookInfo bookInfo, List<OnlineChapterRef> toc, List<File> contents, OnlineDownloadCancelToken token) throws Exception {
+        try (ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(file)))) {
             putStoredMimetype(zip);
             putZipEntry(zip, "META-INF/container.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                     + "<container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
@@ -990,12 +1033,13 @@ public class OnlineBookClient {
             nav.append("<!DOCTYPE html><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>")
                     .append(escapeXml(bookInfo.title)).append("</title></head><body><nav epub:type=\"toc\"><ol>");
             for (int i = 0; i < contents.size(); i++) {
+                throwIfCancelled(token);
                 String id = "chapter" + i;
                 String href = "chapters/" + id + ".xhtml";
                 manifest.append("<item id=\"").append(id).append("\" href=\"").append(href).append("\" media-type=\"application/xhtml+xml\"/>");
                 spine.append("<itemref idref=\"").append(id).append("\"/>");
                 nav.append("<li><a href=\"").append(href).append("\">").append(escapeXml(toc.get(i).title)).append("</a></li>");
-                putZipEntry(zip, "OEBPS/" + href, chapterXhtml(bookInfo.title, toc.get(i).title, contents.get(i)));
+                putZipEntry(zip, "OEBPS/" + href, chapterXhtml(bookInfo.title, toc.get(i).title, readText(contents.get(i))));
             }
             nav.append("</ol></nav></body></html>");
             putZipEntry(zip, "OEBPS/nav.xhtml", nav.toString());
@@ -1062,6 +1106,14 @@ public class OnlineBookClient {
         }
     }
 
+    private String readText(File file) throws Exception {
+        try (FileInputStream input = new FileInputStream(file); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            for (int read; (read = input.read(buffer)) != -1;) output.write(buffer, 0, read);
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
+    }
+
     private void ensureDir(File dir) {
         if (!dir.exists() && !dir.mkdirs()) {
             throw new IllegalStateException("无法创建目录：" + dir.getAbsolutePath());
@@ -1083,26 +1135,16 @@ public class OnlineBookClient {
         file.delete();
     }
 
-    private static class OnlineBookInfo {
+    static class OnlineBookInfo {
         String title;
         String author;
         String category;
         String intro;
     }
 
-    private static class OnlineChapterRef {
+    static class OnlineChapterRef {
         String title;
         String url;
-    }
-
-    private static class ChapterDownload {
-        final int index;
-        final String content;
-
-        ChapterDownload(int index, String content) {
-            this.index = index;
-            this.content = content;
-        }
     }
 
     private static class DataIdBlock {

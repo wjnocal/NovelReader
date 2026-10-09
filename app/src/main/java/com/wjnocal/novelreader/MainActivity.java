@@ -2196,6 +2196,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startExportBook(BookEntity book) {
+        if (com.wjnocal.novelreader.online.OnlineDownloadState.isIncomplete(book)) {
+            Toast.makeText(this, "请先完成下载，再导出完整书籍", Toast.LENGTH_LONG).show();
+            return;
+        }
         File source = book.originalFilePath == null ? null : new File(book.originalFilePath);
         if (source == null || !source.isFile()) {
             Toast.makeText(this, "原始文件不存在，请先重新绑定", Toast.LENGTH_LONG).show();
@@ -3229,6 +3233,7 @@ public class MainActivity extends AppCompatActivity {
         if (book.storageDirPath != null && !book.storageDirPath.trim().isEmpty() && !new File(book.storageDirPath).exists()) {
             return true;
         }
+        if (com.wjnocal.novelreader.online.OnlineDownloadState.isIncomplete(book)) return false;
         return book.originalFilePath != null && !book.originalFilePath.trim().isEmpty() && !new File(book.originalFilePath).exists();
     }
 

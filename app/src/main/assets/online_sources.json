@@ -48,6 +48,7 @@
     "search": {
       "url": "https://www.shuhaige.net/search.html",
       "method": "post",
+      "cookies": "waf_sc=''; HMACCOUNT=''",
       "data": {
         "searchkey": "%s",
         "searchtype": "all"
@@ -381,6 +382,7 @@
     "search": {
       "url": "https://www.biquge365.net/s.php",
       "method": "post",
+      "minIntervalMillis": 15000,
       "data": {
         "type": "articlename",
         "s": "%s"
@@ -409,10 +411,10 @@
     },
     "crawl": {
       "timeoutMillis": 18000,
-      "minIntervalMillis": 15000,
-      "maxIntervalMillis": 17000,
+      "minIntervalMillis": 500,
+      "maxIntervalMillis": 1200,
       "maxRetries": 2,
-      "concurrency": 1
+      "concurrency": 3
     }
   },
   {
@@ -441,8 +443,8 @@
     },
     "toc": {
       "url": "https://www.ranwen8.cc/book/%s/index_1.html",
-      "item": "body > div:nth-child(4) > div > ul > li > a",
-      "nextPage": "body > div:nth-child(4) > div > div > select > option"
+      "item": ".chapterlist > li > a",
+      "nextPage": ".input-group select > option"
     },
     "chapter": {
       "title": "#jsnc_l > div > h1",
@@ -487,7 +489,7 @@
       "paragraphTagClosed": true,
       "filterTxt": "首发网址.+。|\\(本章完\\)|一秒记住【新天禧小说\\s*】手机用户输入地址：www\\s*\\.xtxxs\\s*\\.com|支持（新天禧小说\\s*）把本站分享那些需要的小伙伴！找不到书请留言！|搜.+免费看精品文学",
       "filterTag": "script",
-      "nextPage": "#pb_next"
+      "nextPage": "#wrapper > article > div.bottem1 > a:nth-child(3)"
     },
     "crawl": {
       "timeoutMillis": 18000,
@@ -510,7 +512,8 @@
       "bookName": ".name > a",
       "author": ".author",
       "status": ".serial",
-      "category": ".type"
+      "category": ".type",
+      "nextPage": ".page > span > a:nth-child(2), .page > span > a:nth-child(3), .page > span > a:nth-child(4)"
     },
     "book": {
       "url": "https://www.0xs.net/txt_1/(.*?).html"
@@ -541,14 +544,15 @@
     "name": "老幺小说网",
     "baseUrl": "https://www.laoyaoxs.org/",
     "enabled": true,
-    "comment": "限流书源；已按 data-id 还原正文段落顺序",
+    "comment": "限流书源；按 data-id 还原段落；同步上游 1–2 秒间隔，遇限流自动退避",
     "search": {
       "url": "https://www.laoyaoxs.org/search.php?key=%s",
       "method": "get",
       "result": ".result > ul > li",
       "bookName": ".book_inf > h3 > a",
       "author": ".book_inf > p.tags > span:nth-child(1) > a",
-      "latestChapter": ".book_inf > p:nth-child(3) > a"
+      "latestChapter": ".book_inf > p:nth-child(3) > a",
+      "nextPage": ".result > div > span > a:not(.sl)"
     },
     "book": {
       "url": "https://www.laoyaoxs.org/info/(.*?).html",
@@ -567,8 +571,8 @@
     },
     "crawl": {
       "timeoutMillis": 18000,
-      "minIntervalMillis": 30000,
-      "maxIntervalMillis": 33000,
+      "minIntervalMillis": 1000,
+      "maxIntervalMillis": 2000,
       "maxRetries": 2,
       "concurrency": 1
     }
@@ -597,7 +601,8 @@
       "category": ".item > div > p:nth-child(2) > span:nth-child(2)"
     },
     "toc": {
-      "item": "#list > ul > li > a"
+      "item": "#list > ul > li > a",
+      "nextPage": "#pages > .gr"
     },
     "chapter": {
       "title": ".submenu > h1",
@@ -708,6 +713,7 @@
       "content": "#booktxt",
       "paragraphTagClosed": true,
       "filterTag": "script",
+      "nextPage": "#wrapper > article > div.bottem1 > a:nth-child(3)",
       "filterTxt": "\\(本章完\\)|小说之家为广大书友们提供好看的网络小说全文免费在线阅读，如果您喜欢本站，请分享给更多的书友们！|如果您觉得《.+》小说很精彩的话，请粘贴以下网址分享给您的好友，谢谢支持！|（本书网址：.*?）"
     },
     "crawl": {
@@ -812,7 +818,8 @@
       "method": "get",
       "result": "#ListContents > div",
       "bookName": ".margin0h5 > a.fonttext",
-      "author": ".margin0h5 > a:nth-child(2)"
+      "author": ".margin0h5 > a:nth-child(2)",
+      "nextPage": "//div[@class='onlypc']//div//a[not(text()='首页') and not(text()='上一页') and not(text()='下一页') and not(text()='尾页')]"
     },
     "book": {
       "url": "https://www.dxmwx.org/book/(.*?).html"
@@ -848,7 +855,11 @@
       "method": "get",
       "result": "#article_list_content > li > div.newnav",
       "bookName": "h3 > a:nth-child(2)",
-      "author": "div.labelbox > label:nth-child(1)"
+      "author": "div.labelbox > label:nth-child(1)",
+      "category": "div.labelbox > label:nth-child(2)",
+      "status": "div.labelbox > label:nth-child(3)",
+      "latestChapter": "div.zxzj > p > a",
+      "nextPage": "#pagelink > a:not(.pgroup):not(.ngroup):not(.next)"
     },
     "book": {
       "url": "https://101kks.com/book/(.*?).html"
@@ -930,10 +941,10 @@
       "title": "#mlfy_main_text > h1",
       "content": "#content@java:base64.decode()",
       "paragraphTagClosed": true,
-      "filterTxt": "\\((继续下一页|本章完)\\)",
+      "filterTxt": "\\((继续下一页|本章完)\\)|最⊥新⊥小⊥说⊥在⊥六⊥9⊥⊥书⊥⊥吧⊥⊥首⊥发！",
       "filterTag": "",
-      "nextPage": "#pb_next",
-      "nextPageInJs": "body > script:nth-child(17)@js:r=r.match(/nextpage = \\\"(.*?)\\\"/)[1]"
+      "nextPage": "#readbg > div.mlfy_page > a:nth-child(4)",
+      "nextPageInJs": "//*[@id=\"readbg\"]/script[4]@js:r=r.match(/nextpage = \"(.*?)\"/)[1]"
     },
     "crawl": {
       "timeoutMillis": 18000,

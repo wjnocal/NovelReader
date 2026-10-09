@@ -11,6 +11,8 @@ import android.os.Build;
 import android.os.IBinder;
 
 import com.wjnocal.novelreader.OnlineSearchActivity;
+import com.wjnocal.novelreader.ui.ReaderActivity;
+import com.wjnocal.novelreader.sync.SyncRepository;
 
 import java.util.ArrayList;
 import java.util.concurrent.CancellationException;
@@ -44,13 +46,17 @@ public class OnlineDownloadService extends Service {
     private static volatile boolean running;
     private static volatile boolean cancelling;
     private static volatile String currentMessage = "";
+    private static volatile long readableBookId = -1L;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private OnlineDownloadCancelToken cancelToken;
     private Future<?> worker;
+    private long lastProgressNotification;
 
     public interface Listener {
         void onDownloadStatus(String message);
+
+        default void onBookAvailable(long bookId) { }
 
         void onDownloadFinished(long bookId);
 
@@ -64,7 +70,16 @@ public class OnlineDownloadService extends Service {
         Listener active = listener;
         if (active != null && running) {
             active.onDownloadStatus(currentMessage);
+            if (readableBookId > 0) active.onBookAvailable(readableBookId);
         }
+    }
+
+    public static long readableBookId() {
+        return readableBookId;
+    }
+
+    public static boolean isDownloading(long bookId) {
+        return running && readableBookId == bookId;
     }
 
     public static boolean isRunning() {
@@ -125,6 +140,7 @@ public class OnlineDownloadService extends Service {
             notifyListenerStatus("已有下载任务正在进行");
             return START_NOT_STICKY;
         }
+        readableBookId = -1L;
         startForeground(NOTIFICATION_ID, notification("准备下载...", true, false));
         startDownload(intent);
         return START_NOT_STICKY;
@@ -137,6 +153,7 @@ public class OnlineDownloadService extends Service {
 
     @Override
     public void onDestroy() {
+        if (cancelToken != null) cancelToken.cancel();
         executor.shutdownNow();
         super.onDestroy();
     }
@@ -145,6 +162,10 @@ public class OnlineDownloadService extends Service {
         running = true;
         cancelling = false;
         cancelToken = new OnlineDownloadCancelToken();
+        OnlineDownloadProgress progress = new OnlineDownloadProgress() {
+            @Override public void onProgress(String message) { notifyListenerStatus(message); }
+            @Override public void onBookAvailable(long bookId) { markReadable(bookId); }
+        };
         worker = executor.submit(() -> {
             try {
                 long bookId;
@@ -152,10 +173,10 @@ public class OnlineDownloadService extends Service {
                 String format = intent.getStringExtra(EXTRA_FORMAT);
                 if (ACTION_DOWNLOAD_URL.equals(intent.getAction())) {
                     String url = intent.getStringExtra(EXTRA_URL);
-                    bookId = client.downloadUrlToLibrary(url, format, this::notifyListenerStatus, cancelToken, sourceIdsFromIntent(intent));
+                    bookId = client.downloadUrlToLibrary(url, format, progress, cancelToken, sourceIdsFromIntent(intent));
                 } else {
                     OnlineBookResult result = resultFromIntent(intent);
-                    bookId = client.downloadToLibrary(result, format, this::notifyListenerStatus, cancelToken);
+                    bookId = client.downloadToLibrary(result, format, progress, cancelToken);
                 }
                 markFinished(bookId);
             } catch (CancellationException e) {
@@ -195,9 +216,7 @@ public class OnlineDownloadService extends Service {
         if (cancelToken != null) {
             cancelToken.cancel();
         }
-        if (worker != null) {
-            worker.cancel(true);
-        }
+        // Socket cancellation lets the worker finish cleanup and report cancellation.
         notifyListenerStatus(currentMessage);
         getNotificationManager().notify(NOTIFICATION_ID, notification(currentMessage, true, false));
     }
@@ -211,7 +230,15 @@ public class OnlineDownloadService extends Service {
         if (active != null) {
             active.onDownloadFinished(bookId);
         }
+        SyncRepository.requestAutomatic(this);
         stopSelf();
+    }
+
+    private synchronized void markReadable(long bookId) {
+        readableBookId = bookId;
+        getNotificationManager().notify(NOTIFICATION_ID, notification("已可阅读，后续章节继续下载", true, false));
+        Listener active = listener;
+        if (active != null) active.onBookAvailable(bookId);
     }
 
     private void markCancelled() {
@@ -239,8 +266,12 @@ public class OnlineDownloadService extends Service {
         stopSelf();
     }
 
-    private void notifyListenerStatus(String message) {
+    private synchronized void notifyListenerStatus(String message) {
+        if (cancelling && message != null && message.startsWith("并发下载中：")) return;
         currentMessage = message == null ? "" : message;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (currentMessage.startsWith("并发下载中：") && now - lastProgressNotification < 250) return;
+        lastProgressNotification = now;
         getNotificationManager().notify(NOTIFICATION_ID, notification(currentMessage, true, false));
         Listener active = listener;
         if (active != null) {
@@ -261,11 +292,16 @@ public class OnlineDownloadService extends Service {
         if (ongoing) {
             builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "取消", cancelPendingIntent());
         }
+        if (readableBookId > 0) {
+            builder.addAction(android.R.drawable.ic_menu_view, "立即阅读", openAppIntent());
+        }
         return builder.build();
     }
 
     private PendingIntent openAppIntent() {
-        Intent intent = new Intent(this, OnlineSearchActivity.class);
+        Intent intent = readableBookId > 0
+                ? ReaderActivity.createIntent(this, readableBookId)
+                : new Intent(this, OnlineSearchActivity.class);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             flags |= PendingIntent.FLAG_IMMUTABLE;

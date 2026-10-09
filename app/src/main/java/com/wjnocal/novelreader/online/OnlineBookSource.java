@@ -28,6 +28,8 @@ public class OnlineBookSource {
         public String lastUpdateTime;
         public String status;
         public String nextPage;
+        public String cookies;
+        public int minIntervalMillis;
     }
 
     public static class BookRule {

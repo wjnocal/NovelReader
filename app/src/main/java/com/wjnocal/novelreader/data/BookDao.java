@@ -37,6 +37,13 @@ public interface BookDao {
     @Query("UPDATE books SET currentChapterIndex = 0, scrollY = 0, currentPageIndex = 0, currentPageStartOffset = 0")
     void clearReadingProgress();
 
+    @Query("UPDATE books SET currentChapterIndex = :chapterIndex, scrollY = :scrollY, currentPageIndex = :pageIndex, "
+            + "currentPageStartOffset = :pageStartOffset, updatedAt = :updatedAt, syncUpdatedAt = :updatedAt WHERE id = :bookId")
+    void updateReadingProgress(long bookId, int chapterIndex, int scrollY, int pageIndex, int pageStartOffset, long updatedAt);
+
+    @Query("UPDATE books SET finishedAt = :finishedAt, updatedAt = :finishedAt, syncUpdatedAt = :finishedAt WHERE id = :bookId")
+    void markFinished(long bookId, long finishedAt);
+
     @Insert
     long insert(BookEntity book);
 
